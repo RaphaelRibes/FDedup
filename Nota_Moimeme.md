@@ -50,3 +50,24 @@ Les performances I/O (Entrées/Sorties) sont souvent le goulot d'étranglement d
 ## 5. Environnement et Dépendances
 
 Pour garantir des performances optimales et une reproductibilité totale sans s'encombrer de conflits de versions, l'outil s'appuiera sur un environnement isolé embarquant directement les compilateurs et les bibliothèques nécessaires (comme la lib `xxhash` officielle ou les parseurs FASTQ optimisés). L'utilisation d'un gestionnaire natif garantira de toujours compiler avec les optimisations les plus récentes (ex: AVX512 pour XXH3).
+
+# Algo
+
+```text
+Algorithme FDedup(chemin_vers_fichier):
+    initialiser_structure_succincte()
+    ouvrir_fichier_source(chemin_vers_fichier)
+    ouvrir_fichier_sortie("output.fastq", mode="append")
+
+    pour chaque read dans fichier_source:
+        hash = XXH3(read.sequence)
+        
+        si hash non présent dans structure_succincte:
+            ajouter hash à structure_succincte
+            écrire read dans fichier_sortie
+        sinon:
+            ignorer read
+
+    fermer_fichier_source()
+    fermer_fichier_sortie()
+```
