@@ -1,0 +1,12 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+.idea
+
+# Added by cargo
+
+/target
+dev
+fastqc
+multiqc_data
+data

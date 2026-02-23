@@ -1,0 +1,24 @@
+[workspace]
+channels = ["conda-forge", "bioconda"]
+name = "FDedup"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+rust = ">=1.93.1,<1.94"
+fastqc = ">=0.12.1,<0.13"
+multiqc = ">=1.33,<2"
+
+[feature.rapport.dependencies]
+typst = "*"
+
+[feature.rapport.tasks.compile_rapport]
+cmd = "typst compile --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
+
+[feature.rapport.tasks.watch_rapport]
+cmd = "typst watch --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
+
+[environments]
+rapport = { features = ["rapport"], no-default-feature = true }
