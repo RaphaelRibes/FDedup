@@ -7,19 +7,22 @@ version = "0.1.0"
 [tasks._generate-genome]
 cmd = "mkdir -p data && python scripts/create_genome.py data/genome.fasta 100000"
 outputs = ["data/genome.fasta"]
+default-environment = "bench"
 
 [tasks._generate-raw]
 depends-on = ["_generate-genome"]
-cmd = "iss generate --model novaseq --genomes data/genome.fasta --n_reads 1000000 --output data/simulated"
+cmd = "iss generate --model novaseq --genomes data/genome.fasta --output data/simulated -m NovaSeq -p 4 --seed 42"
 inputs = ["data/genome.fasta"]
 outputs = ["data/simulated_R1.fastq", "data/simulated_R2.fastq"]
+default-environment = "bench"
 
 [tasks._dedup]
 depends-on = ["_generate-raw"]
 args = ["input", "output"]
-cmd = "cargo run --release {{ input }} {{ output }}"
+cmd = "cargo run --release -- -v {{ input }} {{ output }}"
 inputs = ["{{ input }}"]
 outputs = ["{{ output }}"]
+default-environment = "bench"
 
 [tasks._dedup-both]
 cmd = "echo ''"
@@ -29,29 +32,36 @@ depends-on = [
     { task = "_dedup", args = ["data/dedup_R1.fastq","data/dedup_R1_bis.fastq"] },
     { task = "_dedup", args = ["data/dedup_R2.fastq","data/dedup_R2_bis.fastq"] },
 ]
+default-environment = "bench"
 
 [tasks._qc]
 depends-on = ["_dedup-both"]
 cmd = "mkdir -p rapport && fastqc data/simulated_R1.fastq data/simulated_R2.fastq data/dedup_R1.fastq data/dedup_R2.fastq data/dedup_R1_bis.fastq data/dedup_R2_bis.fastq -o rapport/ -t 4"
 inputs = ["data/simulated_R1.fastq", "data/simulated_R2.fastq", "data/dedup_R1.fastq", "data/dedup_R2.fastq", "data/dedup_R1_bis.fastq", "data/dedup_R2_bis.fastq"]
 outputs = ["rapport/simulated_R1_fastqc.html", "rapport/simulated_R2_fastqc.html", "rapport/dedup_R1_fastqc.html", "rapport/dedup_R2_fastqc.html", "rapport/dedup_R1_bis_fastqc.html", "rapport/dedup_R2_bis_fastqc.html"]
+default-environment = "bench"
 
 [tasks._mqc]
 depends-on = ["_qc"]
 cmd = "multiqc rapport/ -o rapport/"
 inputs = ["rapport/simulated_R1_fastqc.html", "rapport/simulated_R2_fastqc.html", "rapport/dedup_R1_fastqc.html", "rapport/dedup_R2_fastqc.html"]
 outputs = ["rapport/multiqc_report.html"]
+default-environment = "bench"
 
 [tasks.start]
 depends-on = ["_mqc"]
 cmd = "open rapport/multiqc_report.html"
+default-environment = "bench"
 
-[dependencies]
-rust = ">=1.93.1,<1.94"
+
+[feature.bench.dependencies]
 fastqc = ">=0.12.1,<0.13"
 multiqc = ">=1.33,<2"
 insilicoseq = ">=2.0.1,<3"
 fastp = ">=1.1.0,<2"
+
+[dependencies]
+rust = ">=1.93.1,<1.94"
 
 [feature.rapport.dependencies]
 typst = "*"
@@ -62,5 +72,15 @@ cmd = "typst compile --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
 [feature.rapport.tasks.watch_rapport]
 cmd = "typst watch --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
 
+[feature.profile.tasks]
+profile-normal = "samply record -s -o normal.json.gz ./target/release/fdedup data/E14_seq2_R1_001.fastq.gz data/E14_seq2_R1_001_dedup.fastq -v --force"
+profile-gz = "samply record -s -o gz.json.gz ./target/release/fdedup data/E14_seq2_R1_001.fastq.gz data/E14_seq2_R1_001.fastq_dedup.gz -v --force"
+
+[feature.profile.dependencies]
+samply = "*"
+inferno = "*"
+
 [environments]
 rapport = { features = ["rapport"], no-default-feature = true }
+bench = ["bench"]
+profile = { features = ["profile"], no-default-feature = true }
