@@ -2,13 +2,13 @@
 
 # FDedup
 
-FDedup (FastDedup) is a fast and memory-efficient FASTX deduplication tool written in Rust. It utilizes `needletail` for high-performance sequence parsing, `xxhash-rust` for rapid hashing, and `fxhash` for a low-overhead memory cache.
+FDedup (FastDedup) is a fast and memory-efficient FASTX PCR deduplication tool written in Rust. It utilizes [needletail](https://github.com/onecodex/needletail) for high-performance sequence parsing, [xxh3](https://github.com/DoumanAsh/xxhash-rust) for rapid hashing, and [fxhash](https://github.com/cbreeden/fxhash) for a low-overhead memory cache.
 
 ## Features
 
-- **Fast & Memory Efficient**: Uses zero-allocation sequence parsing and a non-cryptographic high-speed hashing cache.
+- **Fast & Memory Efficient**: Uses zero-allocation sequence parsing and a non-cryptographic high-speed hashing cache, which automatically scales based on the estimated input file size.
 - **Supports Compressed Formats**: Transparently reads and writes both uncompressed and GZIP compressed (`.gz`) FASTQ/FASTA files.
-- **Incremental Deduplication**: By default, FDedup can append new sequences to an existing deduplicated output file while pre-loading its existing hashes to prevent any duplicates across runs and helps for crash recovery.
+- **Incremental Deduplication & Auto-Recovery**: By default, FDedup appends new sequences to an existing output file. It safely pre-loads existing hashes to prevent duplicates. If an uncompressed output file is corrupted due to a previous crash, FDedup automatically truncates it to the last valid sequence and resumes safely.
 - **Workflow Ready**: Includes a `pixi.toml` file with tasks supporting simulated genome generation, deduplication benching, and FastQC/MultiQC reporting.
 - **Profiling Built-in**: Easy memory and execution profiling tasks available via `samply`.
 
@@ -16,7 +16,6 @@ FDedup (FastDedup) is a fast and memory-efficient FASTX deduplication tool writt
 
 - [Rust](https://rustup.rs/) (>= 1.93)
 - [Pixi](https://pixi.sh) (Optional, for running workflows and benchmarks)
-
 
 ## Usage
 
@@ -31,6 +30,7 @@ fdedup <input_file> [output_file] [--force] [--verbose|-v]
   singularity run fdedup.sif fdedup
 
 ### Run it from Cargo
+
 You can run it directly from Cargo:
 
 ```bash
@@ -47,12 +47,19 @@ pixi run fdedup <input_file> [output_file] [--force] [--verbose|-v]
 ```
 
 ### Run with Singularity / Apptainer
+
 A pre-built Singularity image (`fdedup.sif`) is available for immediate use. You can run the application directly through it:
 
 ```bash
 singularity run fdedup.sif fdedup <input_file> [output_file] [--force] [--verbose|-v]
 ```
 
+## Recommendations
+
+If you are using FDedup in a pre-processing step, we recommend you to not export your file to a `.gz` format.
+If there is any crash, FDedup cannot restart from a compressed file, and you will lose all the progress.
+It is because a corrupted gzipped flux will make the file unreadable, and you will have to start from scratch using `--force`.
+However, if you output to an uncompressed format, FDedup will automatically detect any crash-induced corruption, safely truncate the file to the last valid sequence, and seamlessly resume deduplication.
 
 ## To-Do List
 
@@ -62,3 +69,9 @@ singularity run fdedup.sif fdedup <input_file> [output_file] [--force] [--verbos
 - [ ] Add an option for exporting sequences as **FASTA**.
 - [ ] Maintain paired qualities correctly for more complex file conversions.
 - [ ] Improve error handling.
+
+## License
+This project is licensed under the MIT License. See the [LICENSE](Licence) file for details.
+
+## Author
+[Raphaël Ribes](https://www.raphaelrib.es)

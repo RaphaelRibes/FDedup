@@ -1,0 +1,54 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+%labels
+    Created_With Pixitainer (https://github.com/RaphaelRibes/pixitainer)
+    Pixitainer_Version 0.5.0
+    Pixi_Version  0.64.0
+
+%files
+    "/home/raphael/Desktop/TMP/fdedup/pixi.toml" /opt/conf/pixi.toml
+    "/home/raphael/Desktop/TMP/fdedup/pixi.lock" /opt/conf/pixi.lock
+    "target/release/fdedup" "/opt/conf/target/release/fdedup"
+
+%environment
+    export PIXI_HOME=/opt/pixi
+    export PIXI_PROJECT_MANIFEST=/opt/conf/pixi.toml
+    export PATH="/opt/pixi/bin:$PATH"
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+
+    # 1. Install system dependencies
+    echo "STEP: Updating the image"
+    apt-get update && apt-get install -y curl
+
+    # 2. Install Pixi globally to /opt/pixi
+    export PIXI_HOME=/opt/pixi
+    echo "STEP: Downloading Pixi"
+    curl -fsSL https://pixi.sh/install.sh | bash
+    export PATH="/opt/pixi/bin:$PATH"
+
+    pixi self-update --version  0.64.0
+
+    # 3. Setup the Project Environment
+    mkdir -p /opt/conf
+    cd /opt/conf
+
+    echo "STEP: Installing the environment"
+    pixi config set --local run-post-link-scripts insecure
+    echo 'Skipping environment installation'
+
+    # 3.5 Run extra post commands
+    
+
+    # 4. Cleanup
+    echo "STEP: Cleaning"
+    apt-get remove -y curl
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%runscript
+    cd /opt/conf
+    pixi run --as-is -m /opt/conf/pixi.toml "$@"

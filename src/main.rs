@@ -31,25 +31,52 @@ fn estimer_capacite_sequences(chemin: &str) -> io::Result<usize> {
     Ok(estimated_capacity)
 }
 
-fn precharger_hashes_existants(chemin: &str, checker: &mut HashChecker, verbose: bool) -> io::Result<usize> {
+
+struct ByteCounter(u64);
+
+impl Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0 += buf.len() as u64;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn precharger_hashes_existants(chemin: &str, checker: &mut HashChecker, verbose: bool) -> io::Result<(usize, u64)> {
     if !Path::new(chemin).exists() {
-        return Ok(0);
+        return Ok((0, 0));
     }
 
     if verbose {
         println!("Préchargement des séquences depuis l'output existant...");
     }
 
-    let mut reader = parse_fastx_file(chemin).map_err(|e| io::Error::other(e.to_string()))?;
+    let mut reader = parse_fastx_file(chemin).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     let mut count = 0;
+    let mut valid_bytes = ByteCounter(0);
 
     while let Some(record) = reader.next() {
-        let seqrec = record.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        checker.check(xxh3_64(&seqrec.seq()));
-        count += 1;
+        match record {
+            Ok(seqrec) => {
+                checker.check(xxh3_64(&seqrec.seq()));
+                count += 1;
+                // On écrit virtuellement la séquence pour compter sa taille exacte
+                let _ = seqrec.write(&mut valid_bytes, None);
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("Séquence incomplète détectée à la fin du fichier ({}).", e);
+                    eprintln!("Calcul du point de troncature de sécurité...");
+                }
+                break;
+            }
+        }
     }
 
-    Ok(count)
+    Ok((count, valid_bytes.0))
 }
 
 fn lire_chaque_quatrieme_ligne(chemin_entree: &str, chemin_sortie: &str, force: bool, verbose: bool) -> io::Result<(usize, usize)> {
@@ -62,11 +89,34 @@ fn lire_chaque_quatrieme_ligne(chemin_entree: &str, chemin_sortie: &str, force: 
     if verbose { println!("Capacité estimée totale : {} séquences", estimated_capacity); }
 
     // --- PRÉCHARGEMENT ---
+    let path_out = Path::new(chemin_sortie);
+    let is_gz = path_out.extension().and_then(|s| s.to_str()) == Some("gz");
+
     if force {
         if verbose { println!("Option --force activée : écrasement de la sortie."); }
     } else {
-        let preloaded = precharger_hashes_existants(chemin_sortie, &mut checker, verbose)?;
+        let (preloaded, valid_bytes) = precharger_hashes_existants(chemin_sortie, &mut checker, verbose)?;
         if preloaded > 0 && verbose { println!("{} séquences préchargées.", preloaded); }
+
+        if path_out.exists() {
+            let current_size = fs::metadata(path_out)?.len();
+
+            // Si le fichier est plus grand que les données valides, il faut tronquer
+            if valid_bytes < current_size {
+                if is_gz {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Le fichier de sortie (.gz) est corrompu et ne peut pas être tronqué. Utilisez --force pour recommencer."
+                    ));
+                }
+
+                if verbose {
+                    println!("Troncature du fichier corrompu de {} à {} octets.", current_size, valid_bytes);
+                }
+                let file = OpenOptions::new().write(true).open(path_out)?;
+                file.set_len(valid_bytes)?;
+            }
+        }
     }
 
     // --- PRÉPARATION DE L'ÉCRITURE ---
