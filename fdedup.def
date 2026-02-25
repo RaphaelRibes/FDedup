@@ -3,13 +3,13 @@ From: ubuntu:24.04
 
 %labels
     Created_With Pixitainer (https://github.com/RaphaelRibes/pixitainer)
-    Pixitainer_Version 0.5.0
+    Pixitainer_Version 0.5.1
     Pixi_Version  0.64.0
 
 %files
     "/media/raphael/RawStorage/M1/stage_M2/scratch/FDedup/pixi.toml" /opt/conf/pixi.toml
     "/media/raphael/RawStorage/M1/stage_M2/scratch/FDedup/pixi.lock" /opt/conf/pixi.lock
-    "target/release/fdedup" "/opt/conf/target/release/fdedup"
+    "target/release/fdedup" "/usr/local/bin/fdedup"
 
 %environment
     export PIXI_HOME=/opt/pixi
@@ -37,7 +37,7 @@ From: ubuntu:24.04
 
     echo "STEP: Installing the environment"
     pixi config set --local run-post-link-scripts insecure
-    echo 'Skipping environment installation'
+    pixi run echo 'Skipping environment installation'
 
     # 3.5 Run extra post commands
     
@@ -51,4 +51,4 @@ From: ubuntu:24.04
 
 %runscript
     cd /opt/conf
-    pixi run --as-is -m /opt/conf/pixi.toml "$@"
+    pixi run --locked --as-is -m /opt/conf/pixi.toml "$@"

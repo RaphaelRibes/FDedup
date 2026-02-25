@@ -53,6 +53,7 @@ A pre-built Singularity image (`fdedup.sif`) is available for immediate use. You
 ```bash
 singularity run fdedup.sif fdedup <input_file> [output_file] [--force] [--verbose|-v]
 ```
+> Note: `--force` is very slow when used in a Singularity container. We recommend just deleting the output file before running the container if you want to start from scratch.
 
 ## Recommendations
 
