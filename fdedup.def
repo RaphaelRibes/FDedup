@@ -7,8 +7,8 @@ From: ubuntu:24.04
     Pixi_Version  0.64.0
 
 %files
-    "/home/raphael/Desktop/TMP/fdedup/pixi.toml" /opt/conf/pixi.toml
-    "/home/raphael/Desktop/TMP/fdedup/pixi.lock" /opt/conf/pixi.lock
+    "/media/raphael/RawStorage/M1/stage_M2/scratch/FDedup/pixi.toml" /opt/conf/pixi.toml
+    "/media/raphael/RawStorage/M1/stage_M2/scratch/FDedup/pixi.lock" /opt/conf/pixi.lock
     "target/release/fdedup" "/opt/conf/target/release/fdedup"
 
 %environment

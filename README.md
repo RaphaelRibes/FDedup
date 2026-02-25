@@ -75,3 +75,5 @@ This project is licensed under the MIT License. See the [LICENSE](Licence) file 
 
 ## Author
 [Raphaël Ribes](https://www.raphaelrib.es)
+
+[Céline Mandier](https://gitlab.in2p3.fr/celine.mandier1)
