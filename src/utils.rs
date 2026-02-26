@@ -6,7 +6,13 @@ use needletail::parse_fastx_file;
 
 use crate::hasher::{HashChecker, HashType, SequenceHasher};
 
-pub fn récupérer_la_méthode_de_hachage(size: usize, threshold: f64) -> HashType {
+pub fn récupérer_la_méthode_de_hachage
+(
+    size: usize,
+    threshold: f64
+)
+    -> HashType
+{
     if (2f64 * 2.0f64.powi(64) * threshold).sqrt() > size as f64 {
         HashType::XXH3_128
     } else {
@@ -14,7 +20,7 @@ pub fn récupérer_la_méthode_de_hachage(size: usize, threshold: f64) -> HashTy
     }
 }
 
-pub fn estimer_capacite_sequences<P: AsRef<Path>>(chemin: P) -> Result<usize> { // <-- Swapped to anyhow::Result
+pub fn estimer_capacite_sequences<P: AsRef<Path>>(chemin: P) -> Result<usize> {
     let path = chemin.as_ref();
     if !path.exists() {
         return Ok(0);
@@ -33,11 +39,14 @@ pub fn estimer_capacite_sequences<P: AsRef<Path>>(chemin: P) -> Result<usize> { 
     Ok(estimated_capacity)
 }
 
-pub fn precharger_hashes_existants<T: SequenceHasher>(
+pub fn precharger_hashes_existants<T: SequenceHasher>
+(
     chemin: &str,
     checker: &mut HashChecker<T>,
     verbose: bool
-) -> Result<(usize, u64)> {
+)
+    -> Result<(usize, u64)>
+{
     if !Path::new(chemin).exists() {
         return Ok((0, 0));
     }
@@ -46,7 +55,6 @@ pub fn precharger_hashes_existants<T: SequenceHasher>(
         println!("Préchargement des séquences depuis l'output existant...");
     }
 
-    // Cleaned up map_err with context
     let mut reader = parse_fastx_file(chemin).context("Erreur lors de l'ouverture du fichier de préchargement")?;
     let mut count = 0;
     let mut valid_bytes = ByteCounter(0);

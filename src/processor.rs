@@ -9,13 +9,16 @@ use needletail::parse_fastx_file;
 use crate::hasher::{HashChecker, SequenceHasher};
 use crate::utils::precharger_hashes_existants;
 
-pub(crate) fn executer_deduplication<T: SequenceHasher + 'static>(
+pub(crate) fn executer_deduplication<T: SequenceHasher + 'static>
+(
     chemin_entree: &str,
     chemin_sortie: &str,
     force: bool,
     verbose: bool,
     estimated_capacity: usize
-) -> Result<(usize, usize)> {
+)
+    -> Result<(usize, usize)>
+{
 
     let mut checker = HashChecker::<T>::new(estimated_capacity);
 

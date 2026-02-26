@@ -41,6 +41,10 @@ pub struct Cli {
     #[arg(long, short)]
     pub verbose: bool,
 
+    /// Calculate duplication rate without creating an output file
+    #[arg(long, short = 'd')]
+    pub dryrun: bool,
+
     /// Threshold for automatic hash size selection (ignored if --hash is set)
     #[arg(long, short, default_value_t = 0.01)]
     pub threshold: f64,

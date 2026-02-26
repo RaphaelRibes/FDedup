@@ -12,14 +12,17 @@ use crate::utils::récupérer_la_méthode_de_hachage;
 use cli::{Cli, HashMode};
 use clap::Parser;
 
-fn dispatch(
+fn dispatch
+(
     chemin_entree: &str,
     chemin_sortie: &str,
     estimated_capacity: usize,
     force: bool,
     verbose: bool,
     hash_type: HashType
-) -> Result<(usize, usize)> {
+) 
+    -> Result<(usize, usize)> 
+{
     match hash_type {
         HashType::XXH3_64 => {
             if verbose { println!("Mode: Hash 64 bits (Haute performance)"); }
