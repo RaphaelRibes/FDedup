@@ -1,200 +1,82 @@
-mod check_hash;
+mod cli;
+mod hasher;
+mod utils;
+mod processor;
 
-use needletail::parse_fastx_file;
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use std::env;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufWriter, Write};
-use std::path::Path;
 use std::time::Instant;
-use xxhash_rust::xxh3::xxh3_64;
+use anyhow::{Result, Context};
+use crate::hasher::HashType;
+use crate::processor::executer_deduplication;
+use crate::utils::estimer_capacite_sequences;
+use crate::utils::récupérer_la_méthode_de_hachage;
+use cli::{Cli, HashMode};
+use clap::Parser;
 
-use crate::check_hash::HashChecker;
-
-fn estimer_capacite_sequences(chemin: &str) -> io::Result<usize> {
-    let path = Path::new(chemin);
-    if !path.exists() {
-        return Ok(0);
-    }
-
-    let metadata = fs::metadata(path)?;
-    let file_size_bytes = metadata.len();
-    let is_gz = path.extension().and_then(|s| s.to_str()) == Some("gz");
-
-    let estimated_capacity = if is_gz {
-        (file_size_bytes / 80) as usize
-    } else {
-        (file_size_bytes / 350) as usize
-    };
-
-    Ok(estimated_capacity)
-}
-
-
-struct ByteCounter(u64);
-
-impl Write for ByteCounter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0 += buf.len() as u64;
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn precharger_hashes_existants(chemin: &str, checker: &mut HashChecker, verbose: bool) -> io::Result<(usize, u64)> {
-    if !Path::new(chemin).exists() {
-        return Ok((0, 0));
-    }
-
-    if verbose {
-        println!("Préchargement des séquences depuis l'output existant...");
-    }
-
-    let mut reader = parse_fastx_file(chemin).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    let mut count = 0;
-    let mut valid_bytes = ByteCounter(0);
-
-    while let Some(record) = reader.next() {
-        match record {
-            Ok(seqrec) => {
-                checker.check(xxh3_64(&seqrec.seq()));
-                count += 1;
-                // On écrit virtuellement la séquence pour compter sa taille exacte
-                let _ = seqrec.write(&mut valid_bytes, None);
-            }
-            Err(e) => {
-                if verbose {
-                    eprintln!("Séquence incomplète détectée à la fin du fichier ({}).", e);
-                    eprintln!("Calcul du point de troncature de sécurité...");
-                }
-                break;
-            }
-        }
-    }
-
-    Ok((count, valid_bytes.0))
-}
-
-fn lire_chaque_quatrieme_ligne(chemin_entree: &str, chemin_sortie: &str, force: bool, verbose: bool) -> io::Result<(usize, usize)> {
-    // --- ESTIMATION ET INITIALISATION ---
-    let cap_entree = estimer_capacite_sequences(chemin_entree)?;
-    let cap_sortie = if force { 0 } else { estimer_capacite_sequences(chemin_sortie).unwrap_or(0) };
-    let estimated_capacity = cap_entree + cap_sortie;
-    let mut checker = HashChecker::new(estimated_capacity);
-
-    if verbose { println!("Capacité estimée totale : {} séquences", estimated_capacity); }
-
-    // --- PRÉCHARGEMENT ---
-    let path_out = Path::new(chemin_sortie);
-    let is_gz = path_out.extension().and_then(|s| s.to_str()) == Some("gz");
-
-    if force {
-        if verbose { println!("Option --force activée : écrasement de la sortie."); }
-    } else {
-        let (preloaded, valid_bytes) = precharger_hashes_existants(chemin_sortie, &mut checker, verbose)?;
-        if preloaded > 0 && verbose { println!("{} séquences préchargées.", preloaded); }
-
-        if path_out.exists() {
-            let current_size = fs::metadata(path_out)?.len();
-
-            // Si le fichier est plus grand que les données valides, il faut tronquer
-            if valid_bytes < current_size {
-                if is_gz {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Le fichier de sortie (.gz) est corrompu et ne peut pas être tronqué. Utilisez --force pour recommencer."
-                    ));
-                }
-
-                if verbose {
-                    println!("Troncature du fichier corrompu de {} à {} octets.", current_size, valid_bytes);
-                }
-                let file = OpenOptions::new().write(true).open(path_out)?;
-                file.set_len(valid_bytes)?;
-            }
-        }
-    }
-
-    // --- PRÉPARATION DE L'ÉCRITURE ---
-    let path_out = Path::new(chemin_sortie);
-    let file_out = if path_out.exists() && !force {
-        OpenOptions::new().append(true).open(path_out)?
-    } else {
-        File::create(path_out)?
-    };
-
-    let writer: Box<dyn Write> = if path_out.extension().and_then(|s| s.to_str()) == Some("gz") {
-        Box::new(GzEncoder::new(file_out, Compression::default()))
-    } else {
-        Box::new(file_out)
-    };
-    let mut output = BufWriter::with_capacity(128 * 1024, writer);
-
-    // --- LECTURE ET PARSING ---
-    let mut reader = parse_fastx_file(chemin_entree).map_err(|e| io::Error::other(e.to_string()))?;
-    let mut sequences_processed = 0;
-    let mut dups = 0;
-
-    while let Some(record) = reader.next() {
-        let seqrec = record.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        let is_unique = !checker.check(xxh3_64(&seqrec.seq()));
-
-        if is_unique {
-            seqrec.write(&mut output, None).map_err(|e| io::Error::other(e.to_string()))?;
-        } else {
-            dups += 1;
-        }
-
-        sequences_processed += 1;
-    }
-
-    Ok((sequences_processed, dups))
-}
-
-fn main() {
-    let mut args = env::args();
-    let executable_name = args.next().unwrap_or_else(|| "programme".to_string());
-
-    let mut force = false;
-    let mut verbose = false;
-    let mut positional_args = Vec::new();
-
-    for arg in args {
-        if arg == "--force" { force = true; }
-        else if arg == "--verbose" || arg == "-v" { verbose = true; }
-        else { positional_args.push(arg); }
-    }
-
-    if positional_args.is_empty() {
-        eprintln!("Usage: {} <fichier_entree> [fichier_sortie] [--force] [--verbose|-v]", executable_name);
-        std::process::exit(1);
-    }
-
-    let fichier_entree = &positional_args[0];
-    let fichier_sortie = if positional_args.len() >= 2 { &positional_args[1] } else { "output.fastq.gz" };
-
-    if verbose {
-        println!("Fichier d'entrée : {}", fichier_entree);
-        println!("Fichier de sortie : {}", fichier_sortie);
-    }
-
-    let debut = Instant::now();
-    match lire_chaque_quatrieme_ligne(fichier_entree, fichier_sortie, force, verbose) {
-        Ok((inc, dup)) => {
-            if verbose {
-                println!(
-                    "Séquences traitées : {}\n% de duplication : {:.2}%",
-                    inc,
-                    if inc > 0 { dup as f64 / inc as f64 * 100.0 } else { 0.0 }
-                );
-            }
+fn dispatch(
+    chemin_entree: &str,
+    chemin_sortie: &str,
+    estimated_capacity: usize,
+    force: bool,
+    verbose: bool,
+    hash_type: HashType
+) -> Result<(usize, usize)> {
+    match hash_type {
+        HashType::XXH3_64 => {
+            if verbose { println!("Mode: Hash 64 bits (Haute performance)"); }
+            executer_deduplication::<u64>(chemin_entree, chemin_sortie, force, verbose, estimated_capacity)
         },
-        Err(e) => eprintln!("Erreur lors du traitement : {}", e),
+        HashType::XXH3_128 => {
+            if verbose { println!("Mode: Hash 128 bits (Haute sécurité collision)"); }
+            executer_deduplication::<u128>(chemin_entree, chemin_sortie, force, verbose, estimated_capacity)
+        },
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Cli::parse();
+
+    if args.hash.is_some() && args.threshold != 0.01 {
+        eprintln!("Warning: --hash specified, the automatic selection threshold ({}) is ignored.", args.threshold);
     }
 
-    if verbose { println!("Temps d'exécution total : {:.2?}", debut.elapsed()); }
+    if args.verbose {
+        println!("Input file: {}", args.input);
+        println!("Output file: {}", args.output);
+    }
+
+    let cap_input = estimer_capacite_sequences(&args.input)
+        .context("Input file not found or inaccessible")?;
+
+    let cap_output = if args.force { 0 } else { estimer_capacite_sequences(&args.output).unwrap_or(0) };
+    let total_capacity = cap_input + cap_output;
+
+    let selected_hash_type = match args.hash {
+        Some(HashMode::Bit64) => HashType::XXH3_64,
+        Some(HashMode::Bit128) => HashType::XXH3_128,
+        None => récupérer_la_méthode_de_hachage(total_capacity, args.threshold),
+    };
+
+    if args.verbose { println!("Total estimated capacity: {} sequences", total_capacity); }
+
+    let start = Instant::now();
+
+    let (inc, dup) = dispatch(
+        &args.input,
+        &args.output,
+        total_capacity,
+        args.force,
+        args.verbose,
+        selected_hash_type
+    )?;
+
+    if args.verbose {
+        println!(
+            "Processed: {}\nDuplication: {:.2}%",
+            inc,
+            if inc > 0 { dup as f64 / inc as f64 * 100.0 } else { 0.0 }
+        );
+        println!("Total execution time: {:.2?}", start.elapsed());
+    }
+
+    Ok(())
 }
