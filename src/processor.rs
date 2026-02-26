@@ -98,7 +98,7 @@ pub(crate) fn executer_deduplication<T: SequenceHasher + 'static>
         let hash = T::hash_seq(&seqrec.seq());
         let is_unique = checker.check(hash);
 
-        if !is_unique {
+        if is_unique {
             seqrec.write(&mut output, None).context("Erreur lors de l'écriture de la séquence")?;
         } else {
             dups += 1;

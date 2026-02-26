@@ -26,11 +26,11 @@ fn dispatch
 {
     match hash_type {
         HashType::XXH3_64 => {
-            if verbose { println!("Mode: Hash 64 bits (Haute performance)"); }
+            if verbose { println!("Mode: Hash 64 bits"); }
             executer_deduplication::<u64>(chemin_entree, chemin_sortie, force, verbose, dryrun, estimated_capacity)
         },
         HashType::XXH3_128 => {
-            if verbose { println!("Mode: Hash 128 bits (Haute sécurité collision)"); }
+            if verbose { println!("Mode: Hash 128 bits"); }
             executer_deduplication::<u128>(chemin_entree, chemin_sortie, force, verbose, dryrun, estimated_capacity)
         },
     }

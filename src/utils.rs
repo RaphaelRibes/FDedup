@@ -13,7 +13,7 @@ pub fn récupérer_la_méthode_de_hachage
 )
     -> HashType
 {
-    if (2f64 * 2.0f64.powi(64) * threshold).sqrt() > size as f64 {
+    if (2f64 * 2.0f64.powi(64) * threshold).sqrt() < size as f64 {
         HashType::XXH3_128
     } else {
         HashType::XXH3_64

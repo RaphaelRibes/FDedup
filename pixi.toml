@@ -99,6 +99,6 @@ samply = "*"
 inferno = "*"
 
 [environments]
-rapport = { features = ["rapport"], no-default-feature = true }
-bench = { features = ["bench"], no-default-feature = true }
-profile = { features = ["profile"], no-default-feature = true }
+rapport = ["rapport"]
+bench   = ["bench"]
+profile = ["profile"]
