@@ -1,75 +1,67 @@
-use std::{fs, io};
+use anyhow::{Context, Result};
+use needletail::parse_fastx_file;
 use std::io::Write;
 use std::path::Path;
-use anyhow::{Result, Context};
-use needletail::parse_fastx_file;
+use std::{fs, io};
 
-use crate::hasher::{HashChecker, HashType, SequenceHasher};
+use crate::hasher::{HacheurDeSequence, TypeDeHachage, VerificateurHachage};
 
-pub fn récupérer_la_méthode_de_hachage
-(
-    size: usize,
-    threshold: f64
-)
-    -> HashType
-{
-    if (2f64 * 2.0f64.powi(64) * threshold).sqrt() < size as f64 {
-        HashType::XXH3_128
+pub fn recuperer_methode_de_hachage(taille: usize, seuil: f64) -> TypeDeHachage {
+    if (2f64 * 2.0f64.powi(64) * seuil).sqrt() < taille as f64 {
+        TypeDeHachage::XXH3_128
     } else {
-        HashType::XXH3_64
+        TypeDeHachage::XXH3_64
     }
 }
 
 pub fn estimer_capacite_sequences<P: AsRef<Path>>(chemin: P) -> Result<usize> {
-    let path = chemin.as_ref();
-    if !path.exists() {
+    let chemin_precis = chemin.as_ref();
+    if !chemin_precis.exists() {
         return Ok(0);
     }
 
-    let metadata = fs::metadata(path)?;
-    let file_size_bytes = metadata.len();
-    let is_gz = path.extension().and_then(|s| s.to_str()) == Some("gz");
+    let metadonnees = fs::metadata(chemin_precis)?;
+    let taille_fichier_octets = metadonnees.len();
+    let est_gz = chemin_precis.extension().and_then(|s| s.to_str()) == Some("gz");
 
-    let estimated_capacity = if is_gz {
-        (file_size_bytes / 80) as usize
+    let capacite_estimee = if est_gz {
+        (taille_fichier_octets / 80) as usize
     } else {
-        (file_size_bytes / 350) as usize
+        (taille_fichier_octets / 350) as usize
     };
 
-    Ok(estimated_capacity)
+    Ok(capacite_estimee)
 }
 
-pub fn precharger_hashes_existants<T: SequenceHasher>
-(
+pub fn precharger_hachages_existants<T: HacheurDeSequence>(
     chemin: &str,
-    checker: &mut HashChecker<T>,
-    verbose: bool
-)
-    -> Result<(usize, u64)>
-{
+    verificateur: &mut VerificateurHachage<T>,
+    verbeux: bool,
+) -> Result<(usize, u64)> {
     if !Path::new(chemin).exists() {
         return Ok((0, 0));
     }
 
-    if verbose {
-        println!("Préchargement des séquences depuis l'output existant...");
+    if verbeux {
+        println!("Préchargement des séquences depuis la sortie existante...");
     }
 
-    let mut reader = parse_fastx_file(chemin).context("Erreur lors de l'ouverture du fichier de préchargement")?;
-    let mut count = 0;
-    let mut valid_bytes = ByteCounter(0);
+    let mut lecteur = parse_fastx_file(chemin)
+        .context("Erreur lors de l'ouverture du fichier de préchargement")?;
+    let mut compte = 0;
+    let mut octets_valides = CompteurDOctets(0);
 
-    while let Some(record) = reader.next() {
-        match record {
-            Ok(seqrec) => {
-                let hash = T::hash_seq(&seqrec.seq());
-                checker.check(hash);
+    while let Some(enregistrement_resultat) = lecteur.next() {
+        match enregistrement_resultat {
+            Ok(enregistrement) => {
+                let hachage = T::hacher_sequence(&enregistrement.seq());
+                verificateur.verifier(hachage);
 
-                count += 1;
-                let _ = seqrec.write(&mut valid_bytes, None);
+                compte += 1;
+                let _ = enregistrement.write(&mut octets_valides, None);
             }
             Err(e) => {
-                if verbose {
+                if verbeux {
                     eprintln!("Séquence incomplète détectée à la fin du fichier ({}).", e);
                     eprintln!("Calcul du point de troncature de sécurité...");
                 }
@@ -78,15 +70,15 @@ pub fn precharger_hashes_existants<T: SequenceHasher>
         }
     }
 
-    Ok((count, valid_bytes.0))
+    Ok((compte, octets_valides.0))
 }
 
-struct ByteCounter(u64);
+struct CompteurDOctets(u64);
 
-impl Write for ByteCounter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0 += buf.len() as u64;
-        Ok(buf.len())
+impl Write for CompteurDOctets {
+    fn write(&mut self, tampon: &[u8]) -> io::Result<usize> {
+        self.0 += tampon.len() as u64;
+        Ok(tampon.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {

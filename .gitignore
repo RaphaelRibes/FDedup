@@ -11,3 +11,5 @@ fastqc
 multiqc_data
 data
 rapport
+fdedup.sif
+fdedup.def

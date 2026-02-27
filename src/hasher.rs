@@ -1,49 +1,50 @@
 use rustc_hash::FxHashSet;
 use std::hash::Hash;
-use xxhash_rust::xxh3::{xxh3_128, xxh3_64};
+use xxhash_rust::xxh3::{xxh3_64, xxh3_128};
 
-pub struct HashChecker<T>
+pub struct VerificateurHachage<T>
 where
-    T: Hash + Eq
+    T: Hash + Eq,
 {
     memoire: FxHashSet<T>,
 }
 
-impl<T> HashChecker<T>
+impl<T> VerificateurHachage<T>
 where
-    T: Hash + Eq
+    T: Hash + Eq,
 {
     /// Initialise la structure avec une capacité générique.
-    pub fn new(capacite_estimee: usize) -> Self {
+    pub fn nouveau(capacite_estimee: usize) -> Self {
         Self {
-            memoire: FxHashSet::with_capacity_and_hasher(
-                capacite_estimee,
-                Default::default()
-            ),
+            memoire: FxHashSet::with_capacity_and_hasher(capacite_estimee, Default::default()),
         }
     }
 
     /// Vérifie si la clef est en mémoire.
-    pub fn check(&mut self, hash: T) -> bool {
-        self.memoire.insert(hash)
+    pub fn verifier(&mut self, hachage: T) -> bool {
+        self.memoire.insert(hachage)
     }
 }
 
-pub(crate) trait SequenceHasher: Hash + Eq + Copy + Send + Sync {
-    fn hash_seq(seq: &[u8]) -> Self;
+pub(crate) trait HacheurDeSequence: Hash + Eq + Copy + Send + Sync {
+    fn hacher_sequence(seq: &[u8]) -> Self;
 }
 
-impl SequenceHasher for u64 {
+impl HacheurDeSequence for u64 {
     #[inline(always)]
-    fn hash_seq(seq: &[u8]) -> Self { xxh3_64(seq) }
+    fn hacher_sequence(seq: &[u8]) -> Self {
+        xxh3_64(seq)
+    }
 }
 
-impl SequenceHasher for u128 {
+impl HacheurDeSequence for u128 {
     #[inline(always)]
-    fn hash_seq(seq: &[u8]) -> Self { xxh3_128(seq) }
+    fn hacher_sequence(seq: &[u8]) -> Self {
+        xxh3_128(seq)
+    }
 }
 
-pub(crate) enum HashType {
+pub(crate) enum TypeDeHachage {
     XXH3_64,
     XXH3_128,
 }

@@ -1,111 +1,124 @@
+use crate::hasher::{HacheurDeSequence, VerificateurHachage};
+use crate::utils::precharger_hachages_existants;
+use anyhow::{Context, Result, bail};
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use needletail::parse_fastx_file;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use anyhow::{Result, bail, Context};
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use needletail::parse_fastx_file;
-use crate::hasher::{HashChecker, SequenceHasher};
-use crate::utils::precharger_hashes_existants;
 
-pub(crate) fn executer_deduplication<T: SequenceHasher + 'static>
-(
+pub(crate) fn executer_deduplication<T: HacheurDeSequence + 'static>(
     chemin_entree: &str,
     chemin_sortie: &str,
-    force: bool,
-    verbose: bool,
-    dryrun: bool,
-    estimated_capacity: usize
-)
-    -> Result<(usize, usize)>
-{
+    forcer: bool,
+    verbeux: bool,
+    simulation: bool,
+    capacite_estimee: usize,
+) -> Result<(usize, usize)> {
+    let mut verificateur = VerificateurHachage::<T>::nouveau(capacite_estimee);
 
-    let mut checker = HashChecker::<T>::new(estimated_capacity);
+    if simulation {
+        if verbeux {
+            println!(
+                "Option --simulation activée : calcul du taux de duplication sans écriture de fichier."
+            );
+        }
+        let mut lecteur =
+            parse_fastx_file(chemin_entree).context("Impossible de lire le fichier d'entrée")?;
+        let mut sequences_traitees = 0;
+        let mut duplications = 0;
 
-    if dryrun {
-        if verbose { println!("Option --dryrun activée : calcul du taux de duplication sans écriture de fichier."); }
-        let mut reader = parse_fastx_file(chemin_entree).context("Impossible de lire le fichier d'entrée")?;
-        let mut sequences_processed = 0;
-        let mut dups = 0;
+        while let Some(enregistrement) = lecteur.next() {
+            let enregistrement_seq = enregistrement.context("Données de séquence invalides")?;
 
-        while let Some(record) = reader.next() {
-            let seqrec = record.context("Données de séquence invalides")?;
+            let hachage = T::hacher_sequence(&enregistrement_seq.seq());
+            let est_unique = verificateur.verifier(hachage);
 
-            let hash = T::hash_seq(&seqrec.seq());
-            let is_unique = checker.check(hash);
-
-            if !is_unique {
-            } else {
-                dups += 1;
+            if !est_unique {
+                duplications += 1;
             }
 
-            sequences_processed += 1;
+            sequences_traitees += 1;
         }
 
-        return Ok((sequences_processed, dups));
+        return Ok((sequences_traitees, duplications));
     }
 
     // --- PRÉCHARGEMENT ---
-    let path_out = Path::new(chemin_sortie);
-    let is_gz = path_out.extension().and_then(|s| s.to_str()) == Some("gz");
+    let chemin_sortie_chemin = Path::new(chemin_sortie);
+    let est_gz = chemin_sortie_chemin.extension().and_then(|s| s.to_str()) == Some("gz");
 
-    if force {
-        if verbose { println!("Option --force activée : écrasement de la sortie."); }
+    if forcer {
+        if verbeux {
+            println!("Option --forcer activée : écrasement de la sortie.");
+        }
     } else {
-        let (preloaded, valid_bytes) = precharger_hashes_existants(chemin_sortie, &mut checker, verbose)?;
-        if preloaded > 0 && verbose { println!("{} séquences préchargées.", preloaded); }
+        let (precharges, octets_valides) =
+            precharger_hachages_existants(chemin_sortie, &mut verificateur, verbeux)?;
+        if precharges > 0 && verbeux {
+            println!("{} séquences préchargées.", precharges);
+        }
 
-        if path_out.exists() {
-            let current_size = fs::metadata(path_out)?.len();
+        if chemin_sortie_chemin.exists() {
+            let taille_actuelle = fs::metadata(chemin_sortie_chemin)?.len();
 
-            if valid_bytes < current_size {
-                if is_gz {
-                    bail!("Le fichier de sortie (.gz) est corrompu et ne peut pas être tronqué. Utilisez --force pour recommencer.");
+            if octets_valides < taille_actuelle {
+                if est_gz {
+                    bail!(
+                        "Le fichier de sortie (.gz) est corrompu et ne peut pas être tronqué. Utilisez --forcer pour recommencer."
+                    );
                 }
 
-                if verbose {
-                    println!("Troncature du fichier corrompu de {} à {} octets.", current_size, valid_bytes);
+                if verbeux {
+                    println!(
+                        "Troncature du fichier corrompu de {} à {} octets.",
+                        taille_actuelle, octets_valides
+                    );
                 }
-                let file = OpenOptions::new().write(true).open(path_out)?;
-                file.set_len(valid_bytes)?;
+                let fichier = OpenOptions::new().write(true).open(chemin_sortie_chemin)?;
+                fichier.set_len(octets_valides)?;
             }
         }
     }
 
     // --- PRÉPARATION DE L'ÉCRITURE ---
-    let file_out = if path_out.exists() && !force {
-        OpenOptions::new().append(true).open(path_out)?
+    let fichier_sortie = if chemin_sortie_chemin.exists() && !forcer {
+        OpenOptions::new().append(true).open(chemin_sortie_chemin)?
     } else {
-        File::create(path_out)?
+        File::create(chemin_sortie_chemin)?
     };
 
-    let writer: Box<dyn Write> = if is_gz {
-        Box::new(GzEncoder::new(file_out, Compression::default()))
+    let ecrivain: Box<dyn Write> = if est_gz {
+        Box::new(GzEncoder::new(fichier_sortie, Compression::default()))
     } else {
-        Box::new(file_out)
+        Box::new(fichier_sortie)
     };
-    let mut output = BufWriter::with_capacity(128 * 1024, writer);
+    let mut sortie_tampon = BufWriter::with_capacity(128 * 1024, ecrivain);
 
     // --- LECTURE ET PARSING ---
-    let mut reader = parse_fastx_file(chemin_entree).context("Impossible de lire le fichier d'entrée")?;
-    let mut sequences_processed = 0;
-    let mut dups = 0;
+    let mut lecteur =
+        parse_fastx_file(chemin_entree).context("Impossible de lire le fichier d'entrée")?;
+    let mut sequences_traitees = 0;
+    let mut duplications = 0;
 
-    while let Some(record) = reader.next() {
-        let seqrec = record.context("Données de séquence invalides")?;
+    while let Some(enregistrement) = lecteur.next() {
+        let enregistrement_seq = enregistrement.context("Données de séquence invalides")?;
 
-        let hash = T::hash_seq(&seqrec.seq());
-        let is_unique = checker.check(hash);
+        let hachage = T::hacher_sequence(&enregistrement_seq.seq());
+        let est_unique = verificateur.verifier(hachage);
 
-        if is_unique {
-            seqrec.write(&mut output, None).context("Erreur lors de l'écriture de la séquence")?;
+        if est_unique {
+            enregistrement_seq
+                .write(&mut sortie_tampon, None)
+                .context("Erreur lors de l'écriture de la séquence")?;
         } else {
-            dups += 1;
+            duplications += 1;
         }
 
-        sequences_processed += 1;
+        sequences_traitees += 1;
     }
 
-    Ok((sequences_processed, dups))
+    Ok((sequences_traitees, duplications))
 }

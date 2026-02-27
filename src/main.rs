@@ -1,86 +1,114 @@
 mod cli;
 mod hasher;
-mod utils;
 mod processor;
+mod utils;
 
-use std::time::Instant;
-use anyhow::{Result, Context};
-use crate::hasher::HashType;
+use crate::hasher::TypeDeHachage;
 use crate::processor::executer_deduplication;
 use crate::utils::estimer_capacite_sequences;
-use crate::utils::récupérer_la_méthode_de_hachage;
-use cli::{Cli, HashMode};
+use crate::utils::recuperer_methode_de_hachage;
+use anyhow::{Context, Result};
 use clap::Parser;
+use cli::{Cli, ModeHachage};
+use std::time::Instant;
 
-fn dispatch
-(
+fn distribuer(
     chemin_entree: &str,
     chemin_sortie: &str,
-    estimated_capacity: usize,
-    force: bool,
-    verbose: bool,
-    dryrun: bool,
-    hash_type: HashType
-) 
-    -> Result<(usize, usize)> 
-{
-    match hash_type {
-        HashType::XXH3_64 => {
-            if verbose { println!("Mode: Hash 64 bits"); }
-            executer_deduplication::<u64>(chemin_entree, chemin_sortie, force, verbose, dryrun, estimated_capacity)
-        },
-        HashType::XXH3_128 => {
-            if verbose { println!("Mode: Hash 128 bits"); }
-            executer_deduplication::<u128>(chemin_entree, chemin_sortie, force, verbose, dryrun, estimated_capacity)
-        },
+    capacite_estimee: usize,
+    forcer: bool,
+    verbeux: bool,
+    simulation: bool,
+    type_de_hachage: TypeDeHachage,
+) -> Result<(usize, usize)> {
+    match type_de_hachage {
+        TypeDeHachage::XXH3_64 => {
+            if verbeux {
+                println!("Mode : Hachage 64 bits");
+            }
+            executer_deduplication::<u64>(
+                chemin_entree,
+                chemin_sortie,
+                forcer,
+                verbeux,
+                simulation,
+                capacite_estimee,
+            )
+        }
+        TypeDeHachage::XXH3_128 => {
+            if verbeux {
+                println!("Mode : Hachage 128 bits");
+            }
+            executer_deduplication::<u128>(
+                chemin_entree,
+                chemin_sortie,
+                forcer,
+                verbeux,
+                simulation,
+                capacite_estimee,
+            )
+        }
     }
 }
 
 fn main() -> Result<()> {
-    let args = Cli::parse();
+    let arguments = Cli::parse();
 
-    if args.hash.is_some() && args.threshold != 0.01 {
-        eprintln!("Warning: --hash specified, the automatic selection threshold ({}) is ignored.", args.threshold);
+    if arguments.hachage.is_some() && arguments.seuil != 0.01 {
+        eprintln!(
+            "Avertissement : --hachage spécifié, le seuil de sélection automatique ({}) est ignoré.",
+            arguments.seuil
+        );
     }
 
-    if args.verbose {
-        println!("Input file: {}", args.input);
-        println!("Output file: {}", args.output);
+    if arguments.verbeux {
+        println!("Fichier d'entrée : {}", arguments.entree);
+        println!("Fichier de sortie : {}", arguments.sortie);
     }
 
-    let cap_input = estimer_capacite_sequences(&args.input)
-        .context("Input file not found or inaccessible")?;
+    let cap_entree = estimer_capacite_sequences(&arguments.entree)
+        .context("Fichier d'entrée introuvable ou inaccessible")?;
 
-    let cap_output = if args.force { 0 } else { estimer_capacite_sequences(&args.output).unwrap_or(0) };
-    let total_capacity = cap_input + cap_output;
+    let cap_sortie = if arguments.forcer {
+        0
+    } else {
+        estimer_capacite_sequences(&arguments.sortie).unwrap_or(0)
+    };
+    let capacite_totale = cap_entree + cap_sortie;
 
-    let selected_hash_type = match args.hash {
-        Some(HashMode::Bit64) => HashType::XXH3_64,
-        Some(HashMode::Bit128) => HashType::XXH3_128,
-        None => récupérer_la_méthode_de_hachage(total_capacity, args.threshold),
+    let type_de_hachage_selectionne = match arguments.hachage {
+        Some(ModeHachage::Bit64) => TypeDeHachage::XXH3_64,
+        Some(ModeHachage::Bit128) => TypeDeHachage::XXH3_128,
+        None => recuperer_methode_de_hachage(capacite_totale, arguments.seuil),
     };
 
-    if args.verbose { println!("Total estimated capacity: {} sequences", total_capacity); }
+    if arguments.verbeux {
+        println!("Capacité totale estimée : {} séquences", capacite_totale);
+    }
 
-    let start = Instant::now();
+    let debut = Instant::now();
 
-    let (inc, dup) = dispatch(
-        &args.input,
-        &args.output,
-        total_capacity,
-        args.force,
-        args.verbose,
-        args.dryrun,
-        selected_hash_type
+    let (traitees, duplications) = distribuer(
+        &arguments.entree,
+        &arguments.sortie,
+        capacite_totale,
+        arguments.forcer,
+        arguments.verbeux,
+        arguments.simulation,
+        type_de_hachage_selectionne,
     )?;
 
-    if args.verbose {
+    if arguments.verbeux {
         println!(
-            "Processed: {}\nDuplication: {:.2}%",
-            inc,
-            if inc > 0 { dup as f64 / inc as f64 * 100.0 } else { 0.0 }
+            "Traitées : {}\nDuplication : {:.2}%",
+            traitees,
+            if traitees > 0 {
+                duplications as f64 / traitees as f64 * 100.0
+            } else {
+                0.0
+            }
         );
-        println!("Total execution time: {:.2?}", start.elapsed());
+        println!("Temps d'exécution total : {:.2?}", debut.elapsed());
     }
 
     Ok(())

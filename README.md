@@ -49,10 +49,24 @@ pixi run fdedup <input_file> [output_file] [--force] [--verbose|-v] [--dryrun|-d
 
 ### Run with Singularity / Apptainer
 
-A pre-built Singularity image (`fdedup.sif`) is available for immediate use. You can run the application directly through it:
+> Note: for now, you have to make the image yourself, but I added a task to make it more easily.
+> You need to install [pixitainer](https://github.com/RaphaelRibes/pixitainer) to run this command.
+> 
+> ```shell
+> pixi global install -c https://prefix.dev/raphaelribes -c https://prefix.dev/conda-forge pixitainer
+> ```
 
+You can build a Singularity/Apptainer image using the provided the command:
+```shell
+pixi run cargo build --release
+pixi run containerize
+```
+> Note: by default, this command will use the binary built on your computer and put it in a apptainer container with by default `ubuntu:24.04`.
+> If it is not your current os, I recommend you add the `-b/--base-image` option to specify the base image you want to use for the container.
+
+Then, you can run the container with:
 ```bash
-singularity run fdedup.sif fdedup <input_file> [output_file] [--force] [--verbose|-v] [--dryrun|-d]
+apptainer run fdedup.sif fdedup <input_file> [output_file] [--force] [--verbose|-v] [--dryrun|-d]
 ```
 
 > Note: `--force` is very slow when used in a Singularity container. We recommend just deleting the output file before running the container if you want to start from scratch.

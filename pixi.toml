@@ -98,6 +98,10 @@ inputs = ["data/E14_seq2_R1_001.fastq.gz"]
 samply = "*"
 inferno = "*"
 
+[tasks.containerize]
+description = "Build a Apptainer container for FDedup"
+cmd = "pixi containerize -o fdedup.sif -a target/release/fdedup:/usr/local/bin/fdedup --no-install -s --keep-def"
+
 [environments]
 rapport = ["rapport"]
 bench   = ["bench"]

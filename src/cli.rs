@@ -18,44 +18,43 @@ const ASCII_ART: &str = r#"
 #[command(
     author,
     version,
-    about = "A fast and memory-efficient FASTX PCR deduplication tool",
+    about = "Un outil de déduplication PCR FASTX rapide et économe en mémoire",
     before_help = ASCII_ART,
     arg_required_else_help = true
 )]
-
 #[command(help_expected = true)]
 pub struct Cli {
-    /// Path to the input FASTX file
+    /// Chemin vers le fichier FASTX d'entrée
     #[arg(required = true)]
-    pub input: String,
+    pub entree: String,
 
-    /// Path to the output file
-    #[arg(default_value = "output.fastq.gz")]
-    pub output: String,
+    /// Chemin vers le fichier de sortie
+    #[arg(default_value = "sortie.fastq.gz")]
+    pub sortie: String,
 
-    /// Force overwriting the output file if it exists
+    /// Forcer l'écrasement du fichier de sortie s'il existe
     #[arg(long, short)]
-    pub force: bool,
+    pub forcer: bool,
 
-    /// Enable verbose logging
+    /// Activer les journaux verbeux
     #[arg(long, short)]
-    pub verbose: bool,
+    pub verbeux: bool,
 
-    /// Calculate duplication rate without creating an output file
-    #[arg(long, short = 'd')]
-    pub dryrun: bool,
+    /// Calculer le taux de duplication sans créer de fichier de sortie
+    #[arg(long, short = 's')]
+    pub simulation: bool,
 
-    /// Threshold for automatic hash size selection (ignored if --hash is set)
-    #[arg(long, short, default_value_t = 0.01)]
-    pub threshold: f64,
+    /// Seuil pour la sélection automatique de la taille de hachage (ignoré si --hachage est défini)
+    #[arg(long, short = 'l', default_value_t = 0.01)]
+    pub seuil: f64,
 
-    /// Manually specify hash size (64 or 128 bits)
+    /// Spécifier manuellement la taille de hachage (64 ou 128 bits)
     #[arg(long, short = 'H')]
-    pub hash: Option<HashMode>,
+    pub hachage: Option<ModeHachage>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
-pub enum HashMode {
+pub enum ModeHachage {
     #[value(name = "64")]
     Bit64,
     #[value(name = "128")]
