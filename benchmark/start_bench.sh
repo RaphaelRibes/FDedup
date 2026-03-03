@@ -8,5 +8,5 @@
 #SBATCH --account=dedicated-cpu@cirad-normal
 
 pixi run cargo build --release --bin benchmark/bin
-pixi run ./benchmark.sh
-pixi run python plotit.py
+pixi run -e bench ./benchmark.sh
+pixi run -e bench python plotit.py
