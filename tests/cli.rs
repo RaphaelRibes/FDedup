@@ -7,34 +7,66 @@ fn generer_fastq(
     nom_fichier: &str,
     nb_uniques: usize,
     nb_duplications: usize,
-) -> assert_fs::fixture::ChildPath {
+)
+    -> assert_fs::fixture::ChildPath
+{
     let fichier = dir.child(nom_fichier);
     let mut contenu = String::new();
 
-    // Pour éviter une sous-estimation de la taille du filtre de Bloom,
-    // on allonge la séquence pour que chaque ficher soit assez lourd (environ 500 octets par seq)
+    let nucleotides = [b'A', b'C', b'G', b'T', b'N'];
+
+    // Fonction interne pour générer une séquence pseudo-aléatoire stable
+    let generer_sequence_complexe = |index: usize| -> String {
+        let mut seq = Vec::with_capacity(150);
+        let mut temp_index = index;
+
+        for _ in 0..150 {
+            // On utilise l'index de manière à ce que chaque valeur d'index
+            // produise une combinaison unique de bases
+            seq.push(nucleotides[temp_index % nucleotides.len()]);
+            temp_index /= nucleotides.len();
+        }
+
+        // Si l'index est très grand, on s'assure de remplir les 150 bases
+        while seq.len() < 150 {
+            seq.push(nucleotides[(index + seq.len()) % nucleotides.len()]);
+        }
+
+        String::from_utf8(seq).expect("Séquence UTF-8 invalide")
+    };
+
+    // 1. Séquences uniques
     for i in 0..nb_uniques {
-        contenu.push_str(&format!("@SEQ_U_{}\n", i));
-        let seq = "ACGT".repeat(100) + &format!("{:050}", i);
-        contenu.push_str(&format!("{}\n", seq));
-        contenu.push_str("+\n");
-        contenu.push_str(&"I".repeat(450));
+        let header = format!("@A00123:456:HFWV2DSXX:1:1101:1000:{} 1:N:0:ATGC", 1000 + i);
+        contenu.push_str(&header);
+        contenu.push('\n');
+
+        contenu.push_str(&generer_sequence_complexe(i));
+        contenu.push_str("\n+\n");
+
+        // Qualité binned NovaSeq typique (mélange de Q37 'F' et Q12 ',')
+        let qual = (0..150).map(|j| if (i + j) % 10 == 0 { ',' } else { 'F' }).collect::<String>();
+        contenu.push_str(&qual);
         contenu.push('\n');
     }
 
+    // 2. Duplicats (exactement la même séquence que les premières 'nb_duplications')
     for i in 0..nb_duplications {
-        contenu.push_str(&format!("@SEQ_D_{}\n", i));
-        let seq = "ACGT".repeat(100) + &format!("{:050}", i); // Copie exacte des premières
-        contenu.push_str(&format!("{}\n", seq));
-        contenu.push_str("+\n");
-        contenu.push_str(&"I".repeat(450));
+        let header = format!("@A00123:456:HFWV2DSXX:1:1101:5000:{} 1:N:0:ATGC", 1000 + i);
+        contenu.push_str(&header);
+        contenu.push('\n');
+
+        contenu.push_str(&generer_sequence_complexe(i));
+        contenu.push_str("\n+\n");
+
+        let qual = (0..150).map(|j| if (i + j) % 10 == 0 { ',' } else { 'F' }).collect::<String>();
+        contenu.push_str(&qual);
         contenu.push('\n');
     }
 
     fichier.write_str(&contenu).unwrap();
     fichier
 }
-
 #[test]
 fn test_fichier_entree_inexistant() {
     let temp_dir = assert_fs::TempDir::new().unwrap();

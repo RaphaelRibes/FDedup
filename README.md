@@ -12,6 +12,10 @@ FDedup (FastDedup) is a fast and memory-efficient FASTX PCR deduplication tool w
 - **Workflow Ready**: Includes a `pixi.toml` file with tasks supporting simulated genome generation, deduplication benching, and FastQC/MultiQC reporting.
 - **Profiling Built-in**: Easy memory and execution profiling tasks available via `samply`.
 
+![bench](benchmark/benchmark_graphs.svg)
+> This was made on an HPC () with SLURM. I allocated 6 cores of an AMD EPYC™ 9654 and 32Go of RAM.
+> I will add the comparaison between FDedup and other tools like [Clumpify](https://github.com/BioInfoTools/BBMap/blob/master/sh/clumpify.sh), [FastUniq](https://github.com/alces-software/packager-base/blob/master/apps/fastuniq/1.1/fastuniq.sh.md) and [fastp](https://github.com/OpenGene/fastp.git)
+
 ## Requirements
 
 - [Rust](https://rustup.rs/) (>= 1.93)
@@ -96,3 +100,6 @@ This project is licensed under the MIT License. See the [LICENSE](Licence) file 
 [Raphaël Ribes](https://www.raphaelrib.es)
 
 [Céline Mandier](https://gitlab.in2p3.fr/celine.mandier1)
+
+# Acknowledgements
+Computations were performed on the ISDM-MESO HPC platform, funded in the framework of State-region planning contracts (Contrat de plan État-région – CPER) by the French Government, the Occitanie/Pyrénées-Méditerranée Region, Montpellier Méditerranée Métropole, and the University of Montpellier.
