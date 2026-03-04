@@ -66,21 +66,21 @@ inputs = ["rapport/multiqc_report.html"]
 default-environment = "bench"
 
 [feature.bench.dependencies]
-fastqc = ">=0.12.1,<0.13"
-multiqc = ">=1.33,<2"
 insilicoseq = ">=2.0.1,<3"
-fastp = ">=1.1.0,<2"
+fastqc = ">=0.12.1,<0.13"
 rust = ">=1.93.1,<1.94"
+bbmap = ">=39.77,<40"
+multiqc = ">=1.33,<2"
+fastuniq = ">=1.1,<2"
+fastp = ">=1.1.0,<2"
 python = "3.11.*"
 matplotlib = "*"
 pandas = "*"
 wgsim = "*"
-time = "*"
-bc = "*"
 wget = "*"
 gzip = "*"
-bbmap = ">=39.77,<40"
-fastuniq = ">=1.1,<2"
+time = "*"
+bc = "*"
 
 
 ### RAPPORT
@@ -110,6 +110,10 @@ inferno = "*"
 [tasks.containerize]
 description = "Build a Apptainer container for FDedup"
 cmd = "pixi containerize -o fdedup.sif -a target/release/fdedup:/usr/local/bin/fdedup --no-install -s --keep-def"
+
+[tasks.demo]
+description = "Run a demonstration of FDedup"
+cmd = "./demo.sh"
 
 [environments]
 rapport = ["rapport"]
