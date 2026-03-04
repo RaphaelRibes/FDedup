@@ -18,21 +18,29 @@ const ASCII_ART: &str = r#"
 #[command(
     author,
     version,
-    about = "Un outil de déduplication PCR FASTX rapide et économe en mémoire",
+    about = "Un outil de déduplication PCR FASTX rapide et économe en mémoire (Mode Paired-End)",
     before_help = ASCII_ART,
     arg_required_else_help = true
 )]
 #[command(help_expected = true)]
 pub struct Cli {
-    /// Chemin vers le fichier FASTX d'entrée
-    #[arg(required = true)]
+    /// Chemin vers le fichier FASTX d'entrée (R1 ou Single-End)
+    #[arg(required = true, short = '1', long)]
     pub entree: String,
 
-    /// Chemin vers le fichier de sortie
-    #[arg(default_value = "sortie.fastq.gz")]
+    /// Chemin vers le fichier FASTX d'entrée R2 (Optionnel, active le mode Paired-End)
+    #[arg(short = '2', long)]
+    pub entree_r2: Option<String>,
+
+    /// Chemin vers le fichier de sortie (R1 ou Single-End)
+    #[arg(short = 'o', long, default_value = "sortie_R1.fastq.gz")]
     pub sortie: String,
 
-    /// Forcer l'écrasement du fichier de sortie s'il existe
+    /// Chemin vers le fichier de sortie R2 (Requis si --entree-r2 est fourni)
+    #[arg(short = 'p', long)]
+    pub sortie_r2: Option<String>,
+
+    /// Forcer l'écrasement des fichiers de sortie si ils existent
     #[arg(long, short)]
     pub forcer: bool,
 
@@ -40,7 +48,7 @@ pub struct Cli {
     #[arg(long, short)]
     pub verbeux: bool,
 
-    /// Calculer le taux de duplication sans créer de fichier de sortie
+    /// Calculer le taux de duplication sans créer de fichiers de sortie
     #[arg(long, short = 's')]
     pub simulation: bool,
 

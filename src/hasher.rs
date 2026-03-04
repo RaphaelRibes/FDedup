@@ -28,6 +28,7 @@ where
 
 pub(crate) trait HacheurDeSequence: Hash + Eq + Copy + Send + Sync {
     fn hacher_sequence(seq: &[u8]) -> Self;
+    fn hacher_paire(seq1: &[u8], seq2: &[u8]) -> Self;
 }
 
 impl HacheurDeSequence for u64 {
@@ -35,12 +36,26 @@ impl HacheurDeSequence for u64 {
     fn hacher_sequence(seq: &[u8]) -> Self {
         xxh3_64(seq)
     }
+
+    #[inline(always)]
+    fn hacher_paire(seq1: &[u8], seq2: &[u8]) -> Self {
+        let h1 = xxh3_64(seq1);
+        let h2 = xxh3_64(seq2);
+        h1 ^ h2.rotate_left(32)
+    }
 }
 
 impl HacheurDeSequence for u128 {
     #[inline(always)]
     fn hacher_sequence(seq: &[u8]) -> Self {
         xxh3_128(seq)
+    }
+
+    #[inline(always)]
+    fn hacher_paire(seq1: &[u8], seq2: &[u8]) -> Self {
+        let h1 = xxh3_128(seq1);
+        let h2 = xxh3_128(seq2);
+        h1 ^ h2.rotate_left(64)
     }
 }
 
