@@ -33,10 +33,12 @@ pub struct Cli {
     pub entree_r2: Option<String>,
 
     /// Chemin vers le fichier de sortie (R1 ou Single-End)
+    /// Formats supportés: .fastq, .fq, .fasta, .fa, .fna (+ .gz pour compression)
     #[arg(short = 'o', long, default_value = "sortie_R1.fastq.gz")]
     pub sortie: String,
 
     /// Chemin vers le fichier de sortie R2 (Requis si --entree-r2 est fourni)
+    /// Doit avoir le même format que --sortie
     #[arg(short = 'p', long)]
     pub sortie_r2: Option<String>,
 

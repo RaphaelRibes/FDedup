@@ -72,6 +72,7 @@ pixi run containerize
 
 > Note: by default, this command will use the binary built on your computer and put it in a apptainer container with by default `ubuntu:24.04`.
 > If it is not your current os, I recommend you add the `-b/--base-image` option to specify the base image you want to use for the container.
+> I will make it more automatic with building the binary during the container build.
 
 Then, you can run the container with:
 
@@ -93,8 +94,7 @@ However, if you output to an uncompressed format, FDedup will automatically dete
 - [x] Support for **Paired-End read deduplication**.
 - [ ] Add **Multithreading** to parallelize sequence hashing and processing.
 - [ ] Support tracking sequence **abundances** (counts) instead of naive discarding.
-- [ ] Add an option for exporting sequences as **FASTA**.
-- [ ] Maintain paired qualities correctly for more complex file conversions.
+- [x] Add a possibility for exporting sequences as **FASTA**.
 - [ ] Improve error handling.
 
 ## License

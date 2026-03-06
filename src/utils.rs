@@ -8,6 +8,32 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use crate::hasher::{HacheurDeSequence, TypeDeHachage, VerificateurHachage};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FormatSortie {
+    Fasta,
+    Fastq,
+}
+
+impl FormatSortie {
+    pub fn depuis_extension(chemin: &Path) -> Self {
+        let chemin_str = chemin.to_string_lossy().to_lowercase();
+
+        // Vérifier d'abord si c'est compressé
+        let sans_gz = chemin_str.strip_suffix(".gz").unwrap_or(&chemin_str);
+
+        if sans_gz.ends_with(".fasta") || sans_gz.ends_with(".fa") || sans_gz.ends_with(".fna") {
+            FormatSortie::Fasta
+        } else {
+            // Par défaut FASTQ (.fastq, .fq, ou autre)
+            FormatSortie::Fastq
+        }
+    }
+
+    pub fn est_gz(chemin: &Path) -> bool {
+        chemin.to_string_lossy().to_lowercase().ends_with(".gz")
+    }
+}
+
 pub fn recuperer_methode_de_hachage(taille: usize, seuil: f64) -> TypeDeHachage {
     if (2f64 * 2.0f64.powi(64) * seuil).sqrt() < taille as f64 {
         TypeDeHachage::XXH3_128
@@ -16,8 +42,9 @@ pub fn recuperer_methode_de_hachage(taille: usize, seuil: f64) -> TypeDeHachage 
     }
 }
 
-pub fn preparer_ecrivain(chemin: &Path, forcer: bool) -> Result<Box<dyn Write>> {
-    let est_gz = chemin.extension().and_then(|s| s.to_str()) == Some("gz");
+pub fn preparer_ecrivain(chemin: &Path, forcer: bool) -> Result<(Box<dyn Write>, FormatSortie)> {
+    let format = FormatSortie::depuis_extension(chemin);
+    let est_gz = FormatSortie::est_gz(chemin);
 
     let fichier = if chemin.exists() && !forcer {
         OpenOptions::new().append(true).open(chemin)
@@ -27,11 +54,13 @@ pub fn preparer_ecrivain(chemin: &Path, forcer: bool) -> Result<Box<dyn Write>> 
             .with_context(|| format!("Impossible de créer le fichier : {:?}", chemin))?
     };
 
-    if est_gz {
-        Ok(Box::new(GzEncoder::new(fichier, Compression::default())))
+    let ecrivain: Box<dyn Write> = if est_gz {
+        Box::new(GzEncoder::new(fichier, Compression::default()))
     } else {
-        Ok(Box::new(fichier))
-    }
+        Box::new(fichier)
+    };
+
+    Ok((ecrivain, format))
 }
 
 pub fn estimer_capacite_sequences<P: AsRef<Path>>(chemin: P) -> Result<usize> {

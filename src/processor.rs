@@ -1,5 +1,5 @@
 use crate::hasher::{HacheurDeSequence, VerificateurHachage};
-use crate::utils::{precharger_hachages_existants, precharger_hachages_existants_paire, preparer_ecrivain};
+use crate::utils::{precharger_hachages_existants, precharger_hachages_existants_paire, preparer_ecrivain, FormatSortie};
 use anyhow::{Context, Result, bail};
 use needletail::parse_fastx_file;
 use std::fs::{OpenOptions, self};
@@ -20,7 +20,9 @@ pub(crate) fn executer_deduplication<T: HacheurDeSequence + 'static>(
     let mut verificateur = VerificateurHachage::<T>::nouveau(capacite_estimee);
 
     if simulation {
-        if verbeux { println!("Option --simulation activée : calcul du taux de duplication sans écriture de fichier."); }
+        if verbeux {
+            println!("Option --simulation activée : calcul du taux de duplication sans écriture de fichier.");
+        }
         let mut lecteur = parse_fastx_file(chemin_entree).context("Impossible de lire le fichier d'entrée")?;
         let mut sequences_traitees = 0;
         let mut duplications = 0;
@@ -39,12 +41,12 @@ pub(crate) fn executer_deduplication<T: HacheurDeSequence + 'static>(
 
     // --- PRÉCHARGEMENT ---
     let chemin_sortie_chemin = Path::new(chemin_sortie);
-    let est_gz = chemin_sortie_chemin.extension().and_then(|s| s.to_str()) == Some("gz");
+    let est_gz = chemin_sortie_chemin.to_string_lossy().to_lowercase().ends_with(".gz");
 
     if forcer {
         if verbeux { println!("Option --forcer activée : écrasement de la sortie."); }
     } else {
-        let (precharges, octets_valides) = precharger_hachages_existants(chemin_sortie, &mut verificateur, verbeux)?;
+        let (precharges, octets_valides) = precharger_hachages_existants::<T>(chemin_sortie, &mut verificateur, verbeux)?;
         if precharges > 0 && verbeux { println!("{} séquences préchargées.", precharges); }
 
         if chemin_sortie_chemin.exists() {
@@ -60,7 +62,7 @@ pub(crate) fn executer_deduplication<T: HacheurDeSequence + 'static>(
     }
 
     // --- PRÉPARATION DE L'ÉCRITURE ---
-    let ecrivain: Box<dyn Write> = preparer_ecrivain(chemin_sortie_chemin, forcer)?;
+    let (ecrivain, format_sortie) = preparer_ecrivain(chemin_sortie_chemin, forcer)?;
     let mut sortie_tampon = BufWriter::with_capacity(128 * 1024, ecrivain);
 
     // --- LECTURE ET PARSING ---
@@ -68,20 +70,48 @@ pub(crate) fn executer_deduplication<T: HacheurDeSequence + 'static>(
     let mut sequences_traitees = 0;
     let mut duplications = 0;
 
+    // Vérifier le format d'entrée pour éviter FASTA -> FASTQ
+    let mut premier_enregistrement = true;
+
     while let Some(enregistrement) = lecteur.next() {
         let enregistrement_seq = enregistrement.context("Données de séquence invalides")?;
+
+        // Détecter si l'entrée est FASTA (pas de qualités) au premier enregistrement
+        if premier_enregistrement {
+            let est_entree_fasta = enregistrement_seq.qual().is_none() || enregistrement_seq.qual().unwrap().is_empty();
+
+            // Bloquer FASTA -> FASTQ conversion
+            if est_entree_fasta && format_sortie == FormatSortie::Fastq {
+                bail!("Conversion FASTA → FASTQ non supportée: le fichier d'entrée ne contient pas de scores de qualité. Utilisez une extension .fasta/.fa/.fna pour la sortie.");
+            }
+            premier_enregistrement = false;
+        }
+
         let hachage = T::hacher_sequence(&enregistrement_seq.seq());
         let est_unique = verificateur.verifier(hachage);
 
         if est_unique {
-            enregistrement_seq.write(&mut sortie_tampon, None).context("Erreur lors de l'écriture")?;
-        } else { duplications += 1; }
+            // Écrire selon le format demandé
+            match format_sortie {
+                FormatSortie::Fasta => {
+                    writeln!(sortie_tampon, ">{}", String::from_utf8_lossy(enregistrement_seq.id()))
+                        .context("Erreur écriture ID FASTA")?;
+                    writeln!(sortie_tampon, "{}", String::from_utf8_lossy(&*enregistrement_seq.seq()))
+                        .context("Erreur écriture séquence FASTA")?;
+                }
+                FormatSortie::Fastq => {
+                    enregistrement_seq.write(&mut sortie_tampon, None)
+                        .context("Erreur lors de l'écriture FASTQ")?;
+                }
+            }
+        } else {
+            duplications += 1;
+        }
         sequences_traitees += 1;
     }
 
     Ok((sequences_traitees, duplications))
 }
-
 
 // ==========================================
 // MODE PAIRED-END
@@ -132,13 +162,13 @@ pub(crate) fn executer_deduplication_paire<T: HacheurDeSequence + 'static>(
     let chemin_r1_path = Path::new(chemin_sortie_r1);
     let chemin_r2_path = Path::new(chemin_sortie_r2);
 
-    let est_gz_r1 = chemin_r1_path.extension().and_then(|s| s.to_str()) == Some("gz");
-    let est_gz_r2 = chemin_r2_path.extension().and_then(|s| s.to_str()) == Some("gz");
+    let est_gz_r1 = chemin_r1_path.to_string_lossy().to_lowercase().ends_with(".gz");
+    let est_gz_r2 = chemin_r2_path.to_string_lossy().to_lowercase().ends_with(".gz");
 
     if forcer {
         if verbeux { println!("Option --forcer activée : écrasement des sorties Paired-End."); }
     } else {
-        let (precharges, octets_r1, octets_r2) = precharger_hachages_existants_paire(
+        let (precharges, octets_r1, octets_r2) = precharger_hachages_existants_paire::<T>(
             chemin_sortie_r1, chemin_sortie_r2, &mut verificateur, verbeux
         )?;
 
@@ -170,16 +200,34 @@ pub(crate) fn executer_deduplication_paire<T: HacheurDeSequence + 'static>(
     }
 
     // --- PRÉPARATION DE L'ÉCRITURE ---
-    let ecrivain_r1: Box<dyn Write> = preparer_ecrivain(chemin_r1_path, forcer)?;
-    let ecrivain_r2: Box<dyn Write> = preparer_ecrivain(chemin_r2_path, forcer)?;
+    let (ecrivain_r1, format_sortie_r1) = preparer_ecrivain(chemin_r1_path, forcer)?;
+    let (ecrivain_r2, format_sortie_r2) = preparer_ecrivain(chemin_r2_path, forcer)?;
+
+    // Les deux fichiers doivent avoir le même format
+    if format_sortie_r1 != format_sortie_r2 {
+        bail!("Les fichiers de sortie R1 et R2 doivent avoir le même format (FASTA ou FASTQ)");
+    }
 
     let mut sortie_tampon_r1 = BufWriter::with_capacity(128 * 1024, ecrivain_r1);
     let mut sortie_tampon_r2 = BufWriter::with_capacity(128 * 1024, ecrivain_r2);
 
     // --- BOUCLE PRINCIPALE D'ÉCRITURE SYNCHRONISÉE ---
+    let mut premier_enregistrement = true;
+
     while let (Some(enreg_r1_res), Some(enreg_r2_res)) = (lecteur_r1.next(), lecteur_r2.next()) {
         let seq_r1 = enreg_r1_res.context("Séquence invalide dans R1")?;
         let seq_r2 = enreg_r2_res.context("Séquence invalide dans R2")?;
+
+        // Détecter si l'entrée est FASTA (pas de qualités) au premier enregistrement
+        if premier_enregistrement {
+            let est_entree_fasta = seq_r1.qual().is_none() || seq_r1.qual().unwrap().is_empty();
+
+            // Bloquer FASTA -> FASTQ conversion
+            if est_entree_fasta && format_sortie_r1 == FormatSortie::Fastq {
+                bail!("Conversion FASTA → FASTQ non supportée: les fichiers d'entrée ne contiennent pas de scores de qualité. Utilisez une extension .fasta/.fa/.fna pour la sortie.");
+            }
+            premier_enregistrement = false;
+        }
 
         let id_base_r1 = seq_r1.id().split(|&b| b == b' ').next().unwrap_or(seq_r1.id());
         let id_base_r2 = seq_r2.id().split(|&b| b == b' ').next().unwrap_or(seq_r2.id());
@@ -193,8 +241,25 @@ pub(crate) fn executer_deduplication_paire<T: HacheurDeSequence + 'static>(
         let est_unique = verificateur.verifier(hash_combine);
 
         if est_unique {
-            seq_r1.write(&mut sortie_tampon_r1, None).context("Erreur écriture R1")?;
-            seq_r2.write(&mut sortie_tampon_r2, None).context("Erreur écriture R2")?;
+            match format_sortie_r1 {
+                FormatSortie::Fasta => {
+                    writeln!(sortie_tampon_r1, ">{}", String::from_utf8_lossy(seq_r1.id()))
+                        .context("Erreur écriture ID R1 FASTA")?;
+                    writeln!(sortie_tampon_r1, "{}", String::from_utf8_lossy(&*seq_r1.seq()))
+                        .context("Erreur écriture séquence R1 FASTA")?;
+
+                    writeln!(sortie_tampon_r2, ">{}", String::from_utf8_lossy(seq_r2.id()))
+                        .context("Erreur écriture ID R2 FASTA")?;
+                    writeln!(sortie_tampon_r2, "{}", String::from_utf8_lossy(&*seq_r2.seq()))
+                        .context("Erreur écriture séquence R2 FASTA")?;
+                }
+                FormatSortie::Fastq => {
+                    seq_r1.write(&mut sortie_tampon_r1, None)
+                        .context("Erreur écriture R1 FASTQ")?;
+                    seq_r2.write(&mut sortie_tampon_r2, None)
+                        .context("Erreur écriture R2 FASTQ")?;
+                }
+            }
         } else {
             duplications += 1;
         }
