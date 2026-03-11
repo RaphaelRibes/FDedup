@@ -2,7 +2,8 @@
 
 # FastDedup
 
-FastDedup (FDedup) is a fast and memory-efficient FASTX PCR deduplication tool written in Rust. It utilizes [needletail](https://github.com/onecodex/needletail) for high-performance sequence parsing, [xxh3](https://github.com/DoumanAsh/xxhash-rust) for rapid hashing, and [fxhash](https://github.com/cbreeden/fxhash) for a low-overhead memory cache.
+FastDedup (FDedup) is a fast and memory-efficient FASTX PCR deduplication tool written in Rust.
+It utilizes [needletail](https://github.com/onecodex/needletail) for high-performance sequence parsing, [xxh3](https://github.com/DoumanAsh/xxhash-rust) for rapid hashing, and [fxhash](https://github.com/cbreeden/fxhash) for a low-overhead memory cache.
 
 ## Features
 
@@ -66,7 +67,7 @@ You can build a Singularity/Apptainer image using the provided the command:
 
 ```shell
 pixi run cargo build --release
-pixi run containerize
+pixi containerize
 ```
 
 > Note: by default, this command will use the binary built on your computer and put it in a apptainer container with by default `ubuntu:24.04`.

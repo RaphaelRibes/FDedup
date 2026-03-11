@@ -6,6 +6,12 @@ authors = ["Raphaël Ribes", "Céline Mandier"]
 platforms = ["linux-64", "osx-64", "linux-aarch64", "osx-arm64"]
 channels = ["conda-forge", "bioconda"]
 
+[tool.pixitainer]
+add-file = ["target/release/fdedup:/usr/local/bin/fdedup"]
+keep-def = true
+no-install = true
+seamless = true
+output = "fdedup.sif"
 
 ### BENCH
 [tasks._generate-genome]
@@ -109,10 +115,6 @@ inputs = ["data/E14_seq2_R1_001.fastq.gz"]
 [feature.profile.dependencies]
 samply = "*"
 inferno = "*"
-
-[tasks.containerize]
-description = "Build a Apptainer container for FDedup"
-cmd = "pixi containerize -o fdedup.sif -a target/release/fdedup:/usr/local/bin/fdedup --no-install -s --keep-def"
 
 [tasks.demo]
 description = "Run a demonstration of FDedup"
