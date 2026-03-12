@@ -277,34 +277,6 @@ While these tools are typically used downstream after mapping reads to a referen
 However, even without the computationally heavy step of genomic alignment, the sheer format conversion from FASTQ to SAM/BAM introduces significant and unnecessary I/O and processing overhead.
 Because our primary objective is to evaluate and develop a highly optimized, memory-efficient tool strictly for direct FASTQ-to-FASTQ deduplication, these format-dependent tools fall outside the scope of our comparative analysis.
 
-#page(flipped: true)[
-  #figure(
-    align(center)[
-      #table(
-        columns: (auto, auto, auto, auto, auto, 1fr),
-        align: (col, row) => if row == 0 { center } else { left },
-        stroke: 0.5pt + luma(200),
-        fill: (col, row) => if row == 0 { luma(240) } else { none },
-        
-        [*Tool*], [*Algorithm / Approach*], [*PE Support*], [*Error Tolerance*], [*Memory Usage*], [*Key Limitations*],
-        
-        [`fastp` @Chen2018 @Chen2023], [Probabilistic (Bloom filter/hashes)], [Yes], [No], [Configurable], [False-positive rate; long runtime],
-        
-        [`FastUniq` @Xu2012], [Deterministic (Merge sort)], [Yes], [No], [Very High], [Severe RAM bottleneck; sensitive to input file order.],
-        
-        [`Clumpify` @Bushnell2014], [k-mer grouping], [Yes], [Yes], [Variable], [Variable stability on massive datasets; high memory overhead.],
-        
-        [`SeqKit rmdup` @Shen2016 @Shen2024], [Exact matching (Hashing/MD5)], [No], [No], [Very Low], [Desynchronizes paired-end files.],
-        
-        [`CD-HIT-DUP` @Fu2012 @Huang2010], [Greedy incremental clustering], [Yes], [Yes], [Very High], [Stability issues in containerized environments.],
-        
-        [`PRINSEQ++` @Cantu2019], [Probabilistic (Bloom filter)], [Yes], [No], [Low], [False-positives rate]
-      )
-    ],
-    caption: [Summary of existing tools for reads deduplication and their limitations.],
-  )
-]
-
 = -- FastDedup: High-Performance FASTX Deduplication
 #v(1em)
 
@@ -410,7 +382,76 @@ This is the mathematical foundation that allows `FDedup` to guarantee a collisio
 
 = Benchmarking and performance evaluation
 
-TODO
+Setup that it OOM at 32GB of RAM usage because who would, in its right mind, put 32GB of RAM on a deduplication tool?
+It's also single core because it's useless to parallelize a tool that is already faster than the disk I/O bottleneck.
+(Faudra le dire mieux ça)
+
+#figure(
+      image("PE.svg", width: 110%),
+      caption: [
+        Execution time and memory usage of `FastDedup` compared to existing tools across varying dataset sizes.
+      ],
+    )
+
+#page(flipped: true)[
+  #figure(
+    align(center)[
+      #table(
+        columns: (auto, auto, auto, auto, auto, 1fr),
+        align: (col, row) => if row == 0 { center } else { left },
+        stroke: 0.5pt + luma(200),
+        fill: (col, row) => if row == 0 { luma(240) } else { none },
+        
+        [*Tool*], [*Algorithm / Approach*], [*PE Support*], [*Error Tolerance*], [*Memory Usage*], [*Key Limitations*],
+        
+        [`fastp` @Chen2018 @Chen2023], [Probabilistic (Bloom filter/hashes)], [Yes], [No], [Configurable], [False-positive rate; long runtime],
+        
+        [`FastUniq` @Xu2012], [Deterministic (Merge sort)], [Yes], [No], [Very High], [Severe RAM bottleneck; sensitive to input file order.],
+        
+        [`Clumpify` @Bushnell2014], [k-mer grouping], [Yes], [Yes], [Variable], [Variable stability on massive datasets; high memory overhead.],
+        
+        [`SeqKit rmdup` @Shen2016 @Shen2024], [Exact matching (Hashing/MD5)], [No], [No], [Very Low], [Desynchronizes paired-end files.],
+        
+        [`CD-HIT-DUP` @Fu2012 @Huang2010], [Greedy incremental clustering], [Yes], [Yes], [Very High], [Stability issues in containerized environments.],
+        
+        [`PRINSEQ++` @Cantu2019], [Probabilistic (Bloom filter)], [Yes], [No], [Low], [False-positives rate],
+        
+        [`FastDedup`], [Integer-matching (Dynamic hashing)], [Yes], [No], [Very Low], [Theoretical negligible collision risk]
+      )
+    ],
+    caption: [Summary of existing tools for reads deduplication and their limitations.],
+  )
+  
+  #v(1fr)
+  
+  #figure(
+      align(center)[
+          #table(
+            columns: 12,
+            align: center + horizon,
+            
+            // Header Row
+            [*Tool*], [*0.1M*], [*0.3M*], [*0.5M*], [*1.0M*], [*3.0M*], [*5.0M*], [*10.0M*], [*30.0M*], [*50.0M*], [*100.0M*], [*300.0M*],
+            
+            // Data Rows
+            [cdhitdup], [0.88s \ 157.2MB], [2.8s \ 454.2MB], [5.0s \ 751.3MB], [10.2s \ 1494.9MB], [29.7s \ 4444.0MB], [47.5s \ 7274.6MB], [108.4s \ 14639.0MB], [OOM], [OOM], [OOM], [OOM],
+            
+            [clumpify], [3.7s \ 612.4MB], [5.4s \ 873.8MB], [6.6s \ 1188.1MB], [11.0s \ 1951.0MB], [34.6s \ 5709.9MB], [49.7s \ 11151.7MB], [118.1s \ 18208.1MB], [378.3s \ 24856.8MB], [578.0s \ 25812.7MB], [1133.2s \ 25088.4MB], [OOM],
+            
+            [fastp], [3.9s \ 4217.0MB], [7.7s \ 4220.3MB], [10.8s \ 4221.3MB], [19.2s \ 4222.7MB], [53.2s \ 4231.6MB], [86.0s \ 4239.4MB], [165.6s \ 4260.2MB], [484.1s \ 4289.1MB], [812.7s \ 4314.4MB], [1521.3s \ 4325.8MB], [4453.5s \ 4319.7MB],
+            
+            [fastuniq], [0.43s \ #text(fill: green)[3.0MB]], [1.3s \ 283.5MB], [2.3s \ 469.5MB], [5.1s \ 934.5MB], [16.1s \ 2796.0MB], [28.7s \ 4657.5MB], [52.3s \ 9312.0MB], [194.5s \ 27927.0MB], [OOM], [OOM], [OOM],
+            
+            [fdedup_h128], [0.20s \ #text(fill: green)[3.0MB]], [#text(fill: green)[0.42s] \ #text(fill: green)[3.0MB]], [#text(fill: green)[0.66s] \ 15.6MB], [1.3s \ 41.9MB], [3.8s \ 75.9MB], [6.8s \ 143.8MB], [12.8s \ 279.4MB], [#text(fill: green)[43.5s] \ 1095.4MB], [#text(fill: green)[63.9s] \ 1095.0MB], [#text(fill: green)[138.3s] \ 2183.7MB], [432.0s \ 8711.6MB],
+            
+            [fdedup_h64], [#text(fill: green)[0.18s] \ #text(fill: green)[3.0MB]], [0.43s \ #text(fill: green)[3.0MB]], [0.68s \ #text(fill: green)[11.0MB]], [#text(fill: green)[1.3s] \ #text(fill: green)[25.8MB]], [#text(fill: green)[3.6s] \ #text(fill: green)[43.8MB]], [#text(fill: green)[6.1s] \ 79.7MB], [#text(fill: green)[12.6s] \ 151.6MB], [46.3s \ 583.5MB], [68.9s \ 583.6MB], [148.4s \ 1159.4MB], [#text(fill: green)[393.4s] \ 4615.6MB],
+            
+            [prinseqpp], [1.0s \ 44.6MB], [3.0s \ 44.9MB], [4.9s \ 44.7MB], [9.0s \ 44.8MB], [26.8s \ 44.6MB], [44.2s \ #text(fill: green)[44.7MB]], [93.4s \ #text(fill: green)[44.8MB]], [292.7s \ #text(fill: green)[44.6MB]], [474.6s \ #text(fill: green)[44.7MB]], [1002.2s \ #text(fill: green)[44.8MB]], [2533.5s \ #text(fill: green)[45.0MB]],
+          )
+      ],
+      caption: [Runtime and memory usage benchmarking of existing tools and `FastDedup` on synthetic datasets of varying sizes. OOM indicates Out Of Memory errors.],
+    )
+]
 
 = Discussion and future perspectives
 
