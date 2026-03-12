@@ -308,9 +308,9 @@ Because our primary objective is to evaluate and develop a highly optimized, mem
 = -- FastDedup: High-Performance FASTX Deduplication
 #v(1em)
 
-The primary goal behind the development of `FastDedup` (or `FDedup`) was to create a FASTX PCR deduplication tool that prioritizes maximum speed and memory efficiency.
+The goal behind the development of `FastDedup` (or `FDedup`) was to create a FASTX PCR deduplication tool that prioritizes maximum speed and memory efficiency.
 To achieve this, the tool relies on `xxh3` @Collet_xxHash @DoumanAsh_xxhash_rust, a rapid non-cryptographic hash function, to compute a unique fingerprint for each single-end or paired-end read.
-These fingerprints are securely cached in memory using `fxhash`, which provides a low-overhead memory footprint.
+These fingerprints are cached in memory using `fxhash` @cbreeden_fxhash, which provides a low memory footprint.
 
 FDedup provides users with precise control over the hash collision rate while maintaining high performance.
 It automatically scales its hashing strategy, seamlessly switching between 64-bit and 128-bit hashes based on the estimated input sequence count and a user-defined collision probability threshold.
@@ -320,21 +320,20 @@ In the event of an interruption FDedup can safely preload existing hashes from t
 If an uncompressed output file becomes corrupted due to a crash, the tool automatically detects the issue, calculates a fail-safe truncation point, and truncates the file to the last valid sequence before continuing.
 
 Finally, a dry-run mode (`--dry-run` or `-s`) is available to calculate the duplication rate without writing any output files.
-Because file I/O operations account for the majority of execution time, this mode is exceptionally fast and serves as a highly efficient feature for pipeline planning and data analyses.
+Since file I/O operations account for the majority of execution time, this mode is exceptionally fast and serves as a highly efficient feature for pipeline planning and data analyses.
 
 == : Algorithmic Complexity and Hardware-Level Optimizations
-#v(1em)
 
 The architectural principal of `FastDedup`'s performance lies in shifting the deduplication problem from a string-matching paradigm to an integer-matching paradigm.
-By transforming raw paired-end sequences (e.g., 2 x 150 b) into a single 64-bit hash, reducing the data by 37.5 times in both space and time complexity.
+By transforming raw paired-end sequences (e.g., 2 x 150 bytes) into a single 64-bit hash, reducing the data by 37.5 times in both space and time complexity.
 
 === Space Complexity and Memory Footprint
 
-In a traditional deterministic approach, storing a read pair requires retaining sequences of length $L$ (where $L = r_1 + r_2$).
+In a deterministic approach, storing a read pair requires retaining sequences of length $L$ (where $L = r_1 + r_2$).
 The space complexity for $N$ unique sequences scales linearly as $O(N times L)$.
-For a standard 150 bp paired-end dataset, each pair consumes at least 300 bytes of raw character data, plus substantial data structure overhead (e.g., string pointers and capacity metadata).
+For a standard 150 bp paired-end dataset, each pair consumes at least 300 bytes of raw character data, plus substantial data structure overhead (e.g., string pointers).
 Storing $10^8$ sequences typically exceeds 32 GB of RAM.
-By computing a 64-bit hash using `xxh3`, `FastDedup` compresses the sequence identity into exactly 8 bytes.
+By computing a 64-bit hash using `xxh3`, `FastDedup` reduce the sequence identity into exactly 8 bytes.
 This decouples the memory requirement from the read length, reducing the space complexity to $O(N)$ (since $8 << L$).
 
 === Time Complexity and ALU Efficiency
@@ -358,40 +357,37 @@ This zero-allocation pipeline completely bypasses system-level memory allocation
 == : The Mathematics of Dynamic Hashing
 #v(1em)
 
-While `FDedup` defaults to a highly efficient 64-bit hashing strategy, it dynamically assesses the risk of hash collisions to guarantee data integrity. The probability $p$ of a hash collision is calculated using the formula:
-$ p = x^2 / (2 * 2^64) $
+While `FDedup` defaults to the highly efficient 64-bit hashing strategy of `xxh3`, it dynamically assesses the risk of hash collisions to guarantee data integrity. 
+The theoretical risk of a hash collision $p$ for $x$ sequences follows the standard Birthday Problem approximation @feller1968probability @cormen2009algorithms:
+$ p = x^2 / (2 * 2^N) $
 
-Where $x$ represents the estimated number of sequences.
-At the default threshold of $0.01$, it requires approximately $0.19 * 10^9$ sequences to reach a 1‰ collision risk with 64-bit hashing.
-If the estimated dataset size pushes the collision probability beyond the user-defined threshold, `FDedup` automatically scales to 128-bit hashing, effectively nullifying the risk (requiring $0.28 * 10^17$ sequences for the same probability).
+Where $N in {64, 128}$ represents the bit-length of the hash. At the default 64-bit configuration and a probability threshold of $0.001$, it requires approximately $0.19 * 10^9$ sequences to reach a 1‰ collision risk. 
+If the estimated dataset size pushes the collision probability beyond this threshold, `FDedup` automatically scales to 128-bit hashing, effectively nullifying the risk (requiring $0.28 * 10^17$ sequences to reach the same probability).
 
-== : Memory Management and Parsing Optimization
-#v(1em)
+For paired-end reads, maintaining this theoretical probability requires bitwise operations. 
+Let $S_1$ and $S_2$ represent the nucleotide sequences of Read 1 and Read 2, and $H$ be our non-cryptographic uniform hash function mapping to ${0,1}^N$. We define the independent hashes for each read as:
+$ h_1 = H(S_1) $
+$ h_2 = H(S_2) $
 
-To deliver on its claim of memory efficiency, `FDedup` employs a pre-allocation strategy by estimation through the file size.
-Upon initialization, the `estimate_sequence_capacity` function predicts the total number of sequences by evaluating the input file size, dividing by 80 bytes for compressed (`.gz`) files and 350 bytes for uncompressed files.
-This estimation allows the underlying `FxHashSet` to be pre-allocated to the exact required capacity, actively preventing computationally expensive RAM reallocations during runtime.
-Furthermore, `FDedup` integrates the `needletail` to perform high-performance, zero-allocation sequence parsing, drastically reducing memory overhead.
+If the algorithm combined these hashes using a simple bitwise XOR ($plus.o$), a critical failure occurs when Read 1 and Read 2 are identical sequences ($S_1 = S_2$). In this case, $h_1 = h_2$, resulting in:
+$ h_c = h_1 plus.o h_1 = 0 $
 
-== : Paired-End Synchronization Logic
-#v(1em)
+Every paired-end read with identical forward and reverse sequences would map to $0$. This would cause massive, deterministic hash collisions, meaning the collision probability would no longer be bounded by the theoretical uniform distribution, but rather by the biological frequency of identical sequence pairs in the dataset.
 
-Handling paired-end reads requires strict file synchronization without doubling the memory footprint.
-`FDedup` addresses this by generating a single, unified fingerprint for each read pair.
-This is achieved by hashing R1 and R2 independently, and then applying a bitwise XOR combined with a bit rotation to form the final hash.
-To actively prevent desynchronization, the internal module strictly validates the base identifiers of every read pair.
-If a discrepancy is detected between R1 and R2 headers, the tool safely aborts, protecting downstream tools from misaligned data.
+To prevent symmetrical cancellation, the algorithm introduces a bitwise left-rotation by $N/2$ bits, denoted as $R(x, k)$. The unified fingerprint $h_u$ is instead calculated as:
+$ h_u = h_1 plus.o R(h_2, N/2) $
 
-== : Crash Recovery and Best Practices
+Under this operation, even if $S_1 = S_2$:
+$ h_u = h_1 plus.o R(h_1, N/2) eq.not 0 $
 
-While `FDedup` includes robust auto-recovery and file truncation mechanisms, these features are dependent on the output format.
-It is highly recommended to output files in uncompressed formats (such as `.fastq` or `.fasta`) during the deduplication step.
-If an uncompressed file is corrupted during a system crash, `FDedup` can automatically calculate the truncation point to the last valid byte and seamlessly resume.
-In addition to this, deduplication phases often happen in the beginning of pipelines and the output files are often used as input for subsequent steps, then rapidly discarded.
-It is more efficient to keep them uncompressed to avoid unnecessary decompression and recompression cycles, which can be time-consuming and resource-intensive.
+Because $R(h_1, N/2)$ shifts the lower half of the bits to the upper half and vice versa, $h_1 plus.o R(h_1, N/2)$ will almost never equal $0$.
+It would only equal $0$ if $h_1$ consisted of two perfectly identical halves, an event with an astronomically low probability of $2^(-N/2)$.
 
-Conversely, if a `gzip` flux (`.gz`) becomes corrupted, it is rendered unreadable and cannot be safely truncated.
-In such events, users must overwrite the corrupted file and start from scratch.
+Since a bitwise rotation is a bijective function over the $N$-bit vector space, it perfectly preserves the original entropy of $h_2$.
+When two independent, uniformly distributed random variables are combined using a bitwise XOR, the resulting variable remains uniformly distributed.
+Therefore, the unified fingerprint $h_u$ safely maintains a strict uniform distribution, ensuring the overall collision risk remains uncorrupted and strictly bounded by the initial probability formula.
+
+This is the mathematical foundation that allows `FDedup` to guarantee a collision probability of less than 1‰ for datasets containing up to approximately 190 million paired-end reads (380 million total sequences) when using 64-bit hashes.
 
 #page(flipped: true)[
     == : Architecture
@@ -430,4 +426,4 @@ The tests suite was mostly developped by Gemini 3.1 and Claude Sonnet 4.6, revie
 This paper was written by Raphaël Ribes, reviewed and edited by Céline Mandier, with the assistance of Gemini 3.1 for grammar, and language correction. 
 
 #v(1fr)
-#bibliography("works.bib")
+#bibliography("works.bib", style: "american-physics-society")
