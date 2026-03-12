@@ -32,10 +32,10 @@ fdedup [OPTIONS] --input <INPUT>
 - `-t, --threshold <THRESHOLD>`: Threshold for automatic hash size selection$^1$ (default: 0.01).
 - `-H, --hash <HASH>`: Manually specify hash size (64 or 128 bits).
 
-1: The probability $p$ of collision is calculated as $p= \frac{x^2}{2*2^64}$ where $x$ is the estimated number of hashes. 
+1: The probability $p$ of collision is calculated as $p= \frac{x^2}{2*2^{64}}$ where $x$ is the estimated number of hashes. 
 If the probability is higher than the specified threshold, FDedup will automatically switch to 128-bit hashing to nullify the risk of collisions.
 
-> Note: you need $\sqrt{2+2^64*10^{-3}} \approx 0.19*10^9$ sequences to have a 1‰ chance of collision with 64-bit hashing, and $0.28*10^{17}$ sequences to have the same chance with 128-bit hashing. 
+> Note: you need $\sqrt{2+2^{64}*10^{-3}} \approx 0.19*10^9$ sequences to have a 1‰ chance of collision with 64-bit hashing, and $0.28*10^{17}$ sequences to have the same chance with 128-bit hashing. 
 
 ### Run it from Cargo
 
