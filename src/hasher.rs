@@ -65,7 +65,18 @@ impl SequenceHasher for u128 {
 }
 
 /// The type of hash size to use depending on estimated sequence count.
+#[derive(Debug)]
 pub(crate) enum HashType {
     XXH3_64,
     XXH3_128,
+}
+
+impl HashType {
+    /// Returns the number of bits for the hash type (64 or 128).
+    pub fn to_num(&self) -> usize {
+        match self {
+            HashType::XXH3_64 => 64,
+            HashType::XXH3_128 => 128,
+        }
+    }
 }

@@ -37,6 +37,10 @@ impl OutputFormat {
     }
 }
 
+pub fn birthday_problem_square_approximation(x: usize, n: &HashType) -> f64 {
+    (x as f64).powi(2) / 2.0_f64.powi(n.to_num() as i32 + 1)
+}
+
 /// Returns the appropriate `HashType` given the dataset size and collision probability threshold.
 pub fn get_hash_method(size: usize, threshold: f64) -> HashType {
     if (2f64 * 2.0f64.powi(64) * threshold).sqrt() < size as f64 {

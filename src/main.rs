@@ -6,7 +6,7 @@ mod utils;
 use crate::hasher::HashType;
 use crate::processor::{execute_deduplication, execute_paired_deduplication};
 use crate::utils::estimate_sequence_capacity;
-use crate::utils::get_hash_method;
+use crate::utils::{get_hash_method, birthday_problem_square_approximation};
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{Cli, HashMode};
@@ -20,7 +20,7 @@ fn dispatch(
     force: bool,
     verbose: bool,
     dry_run: bool,
-    hash_type: HashType,
+    hash_type: &HashType,
 ) -> Result<(usize, usize)> {
     match hash_type {
         HashType::XXH3_64 => {
@@ -62,7 +62,7 @@ fn dispatch_paired(
     force: bool,
     verbose: bool,
     dry_run: bool,
-    hash_type: HashType,
+    hash_type: &HashType,
 ) -> Result<(usize, usize)> {
     match hash_type {
         HashType::XXH3_64 => {
@@ -161,7 +161,7 @@ fn main() -> Result<()> {
             args.force,
             args.verbose,
             args.dry_run,
-            selected_hash_type,
+            &selected_hash_type,
         )?
     } else {
         if args.verbose {
@@ -175,7 +175,7 @@ fn main() -> Result<()> {
             args.force,
             args.verbose,
             args.dry_run,
-            selected_hash_type,
+            &selected_hash_type,
         )?
     };
 
@@ -188,6 +188,10 @@ fn main() -> Result<()> {
             } else {
                 0.0
             }
+        );
+        println!(
+            "Estimated collisions: {:.2e}%",
+            birthday_problem_square_approximation(processed, &selected_hash_type)*100.0
         );
         println!("Total execution time: {:.2?}", start.elapsed());
     }
