@@ -48,7 +48,7 @@
   #v(1cm)
   #text(size: 11pt, fill: gray)[#datetime.today().display("[day] [month repr:long] [year]")]
   #v(1em)
-  #link("https://github.com/RaphaelRibes/FDedup.git")[FDedup -- GitHub repository]
+  #link("https://github.com/RaphaelRibes/FDedup.git")[FastDedup -- GitHub repository]
 ]
 
 #v(1fr)
@@ -380,14 +380,15 @@ This is the mathematical foundation that allows `FDedup` to guarantee a collisio
 
 = -- Benchmarking and performance evaluation
 
-To test the performances of the differents tools evoked in the previous sections (@tools_table), I benchmarked them on a series of synthetic datasets of varying sizes, ranging from 100,000 to 300 million paired-end reads.
-I then added 10% of duplicates to each dataset.
+To test the performances of the differents tools evoked in the previous sections (@tools_table), I benchmarked them on a series of synthetic datasets of varying sizes, ranging from 100,000 to 300 million paired-end reads to wich I added 10% of duplicates to each dataset.
 This allows us to evaluate the scalability of each tool and its suitability for different types of sequencing projects, from small-scale experiments to large population genomics studies.
 To run those benchamrks in a controled environment, I set-up a snakemake pipeline with each tool having 1 core and 33GB of RAM available.
+This pipeline ran on the High-Performance Computing (HPC) cluster I/O of Meso with AMD EPYC 9654 processors.
 If the tool goes above 32GB of RAM, it is killed and written as OOM (Out Of Memory) in the results table.
 In times where RAM and electricity are becoming increasingly costly and environmentally impactful, it is crucial to consider the resource efficiency of bioinformatics tools.
 Since those tools are for the first step for pre-treatment of data, it would be senseless to run them on luducrous ressources.
 
+== : Uncompressed Paired-End FASTQ
 #figure(
       image("PE.svg", width: 100%),
       caption: [
@@ -465,8 +466,32 @@ We can also see that the difference of RAM usage bewteen the 64-bit and 128-bit 
 
 = -- Discussion and future perspectives
 
-Support for multithreading, more customisation for compression and that's pretty much it.
-It deduplicate PCR fragment notsending men on the moon.
+Now that we have significant data from isolated benchmarks, we can discuss the implications of these results for real-world applications and the future development of `FastDedup`.
+
+== : Output Quality and Deduplication Accuracy
+
+== : Performance with Paired-End Reads
+
+On all paired-end datasets, `FastDedup` outperformed all other tools in terms of execution time for all dataset sizes, while maintaining a very low memory footprint.
+However if the user is looking for the lowest possible memory usage, starting after 3M reads, `prinseq++` is the best choice for paired-end data, but it is more than 7 times slower than `FastDedup` for 5M reads and goes down to 6.4 times slower at 300M reads.
+
+== : Performance with Single-End Reads
+
+== : Performance with Compressed Files
+
+== : The Future of FastDedup
+
+The current version of `FastDedup` is optimized for speed and memory efficiency, but there are some features that could further enhance its functionality.
+Firstly, the support for multithreading, which would allow the tool to take advantage of multiple CPU cores and further reduce execution time, especially for larger datasets.
+We can use thoses mutiple cores for parallelizing the file reading and hashing process, while maintaining a shared hash set for deduplication.
+This can however introduce some overhead due to thread synchronization, so it would require careful testing to ensure that the performance benefits outweigh the costs.
+However, those extra cores could be used for faster file compression and decompression.
+Indeed, writing a compressed file makes the writing phase taking more than 90% of the execution time.
+
+Another feature that could be added is track of abundance, which would allow users to not only remove duplicates but also to quantify how many times each unique sequence was observed in the input dataset.
+This can be particularly useful for applications like metagenomics or transcriptomics, where the abundance of certain sequences can provide important biological insights.
+
+That's pretty much it, it is deduplicating PCR fragments not sending men on the moon.
 
 = -- Conclusion
 
