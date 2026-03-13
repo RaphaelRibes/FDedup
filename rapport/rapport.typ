@@ -1,7 +1,7 @@
 #import "@preview/oxdraw:0.1.0": *
 #import "@preview/cetz:0.4.2": canvas, draw
 #import "@preview/fletcher:0.5.8" as fletcher: diagram, node, edge, shapes
-
+#import "@preview/fontawesome:0.5.0": *
 
 
 #set document(
@@ -47,12 +47,10 @@
   #text(size: 12pt)[*Céline Mandier*\ Study Engineer - Institut de Science des données de Montpellier]
   #v(1cm)
   #text(size: 11pt, fill: gray)[#datetime.today().display("[day] [month repr:long] [year]")]
-  #v(3cm)
+  #v(1em)
+  #link("https://github.com/RaphaelRibes/FDedup.git")[FDedup -- GitHub repository]
 ]
 
-// =============================================================================
-// Abstract
-// =============================================================================
 #v(1fr)
 #rect(fill: luma(245), inset: 1em, width: 100%)[
   *Abstract* -- TODO
