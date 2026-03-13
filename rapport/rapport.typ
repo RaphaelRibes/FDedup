@@ -280,8 +280,8 @@ Because our primary objective is to evaluate and develop a highly optimized, mem
 = -- FastDedup: High-Performance FASTX Deduplication
 #v(1em)
 
-The goal behind the development of `FastDedup` (or `FDedup`) was to create a FASTX PCR deduplication tool that prioritizes maximum speed and memory efficiency.
-To achieve this, the tool relies on `xxh3` @Collet_xxHash @DoumanAsh_xxhash_rust, a rapid non-cryptographic hash function, to compute a unique fingerprint for each single-end or paired-end read.
+The goal behind the development of `FastDedup` (or `FDedup` ; @SE_arch @PE_arch) was to create a FASTX PCR deduplication tool that prioritizes maximum speed and memory efficiency.
+To achieve this, the tool relies on `xxh3` @Collet_xxHash @DoumanAsh_xxhash_rust, a non-cryptographic hash function, to compute a unique fingerprint for each read.
 These fingerprints are cached in memory using `fxhash` @cbreeden_fxhash, which provides a low memory footprint.
 
 FDedup provides users with precise control over the hash collision rate while maintaining high performance.
@@ -308,12 +308,12 @@ Storing $10^8$ sequences typically exceeds 32 GB of RAM.
 By computing a 64-bit hash using `xxh3`, `FastDedup` reduce the sequence identity into exactly 8 bytes.
 This decouples the memory requirement from the read length, reducing the space complexity to $O(N)$ (since $8 << L$).
 
-=== Time Complexity and ALU Efficiency
+=== Time Complexity and Arithmetic Logic Unit (ALU) Efficiency
 
 String-based deduplication necessitates sequential, byte-by-byte comparisons.
 In the worst-case scenario (ex: highly similar sequences or long identical prefixes), comparing two sequences requires $O(L)$ time.
 Conversely, while calculating the initial hash takes $O(L)$ time during the single-pass file reading, all subsequent identity verifications are reduced to integer operations.
-Comparing two 64-bit integers is executed natively by the CPU's Arithmetic Logic Unit (ALU) in exactly 1 clock cycle, effectively reducing the hash lookup and comparison time complexity to $O(1)$. 
+Comparing two 64-bit integers is executed natively by the CPU's ALU in exactly 1 clock cycle, effectively reducing the hash lookup and comparison time complexity to $O(1)$. 
 
 === Cache Locality and Zero-Allocation Pipeline
 
@@ -369,31 +369,41 @@ This is the mathematical foundation that allows `FDedup` to guarantee a collisio
       caption: [
         Architectural design of `FastDedup` for Single-End (SE) reads.
       ],
-    )
+    ) <SE_arch>
     #v(1fr)
     #figure(
-          image("PE.mmd.svg", width: 110%),
-          caption: [
-            Architectural design of `FastDedup` for Paired-End (PE) reads.
-          ],
-        )
+      image("PE.mmd.svg", width: 110%),
+      caption: [
+        Architectural design of `FastDedup` for Paired-End (PE) reads.
+      ],
+    ) <PE_arch>
 
 ]
 
-= Benchmarking and performance evaluation
+= -- Benchmarking and performance evaluation
 
-To test the performances of the differents tools evoked in the previous sections, I benchmarked them on a series of synthetic datasets of varying sizes, ranging from 100,000 to 300 million paired-end reads.
+To test the performances of the differents tools evoked in the previous sections (@tools_table), I benchmarked them on a series of synthetic datasets of varying sizes, ranging from 100,000 to 300 million paired-end reads.
+I then added 10% of duplicates to each dataset.
 This allows us to evaluate the scalability of each tool and its suitability for different types of sequencing projects, from small-scale experiments to large population genomics studies.
 To run those benchamrks in a controled environment, I set-up a snakemake pipeline with each tool having 1 core and 33GB of RAM available.
 If the tool goes above 32GB of RAM, it is killed and written as OOM (Out Of Memory) in the results table.
+In times where RAM and electricity are becoming increasingly costly and environmentally impactful, it is crucial to consider the resource efficiency of bioinformatics tools.
 Since those tools are for the first step for pre-treatment of data, it would be senseless to run them on luducrous ressources.
 
 #figure(
-      image("PE.svg", width: 110%),
+      image("PE.svg", width: 100%),
       caption: [
-        Execution time and memory usage of `FastDedup` compared to existing tools across varying dataset sizes.
+        Execution time and memory usage across varying dataset sizes.
       ],
-    )
+) <PE_bench>
+For uncompressed FASTQ file as inputs and uncompressed FASTQ file as outputs, `FastDedup` consistently outperformed all other tools in terms of execution time (@PE_bench, @PE_table).
+We can also observed that there are no real difference in execution time between the 64-bit and 128-bit hashing strategies, which is consistent with the theoretical analysis of their time complexity.
+We can also see that `FastDedup` takes up significantly less memory than all the other tools up until 3M reads, where `prinseq++` starts to use less memory than `FastDedup`.
+
+However, starting at 30M reads, `CD-HIT-DUP` crashed due to an OOM error, followed by `fastuniq` at 50M reads, and `clumpify` at 300M reads.
+This left only `fastp`, `prinseq++` and `FastDedup` which was 6.4 times faster than `prinseq++` and 11.3 times faster than `fastp` at 300M reads, while using only 4.6GB and 8.7GB of RAM for 64-bit and 128-bit hashing respectively.
+
+We can also see that the difference of RAM usage bewteen the 64-bit and 128-bit hashing strategies is doubled, which is consistent with the the fact that 64 times 2 is 128.
 
 #page(flipped: true)[
   #figure(
@@ -422,7 +432,7 @@ Since those tools are for the first step for pre-treatment of data, it would be 
       )
     ],
     caption: [Summary of existing tools for reads deduplication and their limitations.],
-  )
+  ) <tools_table>
   
   #v(1fr)
   
@@ -452,14 +462,19 @@ Since those tools are for the first step for pre-treatment of data, it would be 
           )
       ],
       caption: [Runtime and memory usage benchmarking of existing tools and `FastDedup` on synthetic datasets of varying sizes. OOM indicates Out Of Memory errors.],
-    )
+    ) <PE_table>
 ]
 
-= Discussion and future perspectives
+= -- Discussion and future perspectives
 
-= Conclusion
+Support for multithreading, more customisation for compression and that's pretty much it.
+It deduplicate PCR fragment notsending men on the moon.
 
-= Acknowledgements
+= -- Conclusion
+
+I'm speed
+
+= -- Acknowledgements
 #v(1em)
 
 This paper was written by Raphaël Ribes, reviewed and edited by Céline Mandier, with the assistance of Gemini 3.1 for grammar, and language correction.
