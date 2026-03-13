@@ -3,45 +3,81 @@ use assert_cmd::Command;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
-// --------------------------------------------------------
+// ================================================================
 // UTILITAIRE : BUILDER DE COMMANDE
-// --------------------------------------------------------
+// ================================================================
 
-/// Retourne une commande prête à l'emploi pointant vers le binaire fdedup.
-/// Centralise le nom du binaire pour faciliter un éventuel renommage.
 fn cmd() -> Command {
     cargo::cargo_bin_cmd!("fdedup")
 }
 
-// --------------------------------------------------------
+// ================================================================
 // UTILITAIRE : GÉNÉRATION DE SÉQUENCES
-// --------------------------------------------------------
+// ================================================================
 
-const NUCLEOTIDES: [u8; 5] = [b'A', b'C', b'G', b'T', b'N'];
-
-/// Génère une séquence nucléotidique déterministe de 150 bases.
+/// Génère une séquence ACGT déterministe de 150 bases via LCG.
 ///
-/// Effectue exactement 150 étapes de décodage en base 5 sur la valeur
-/// `index + offset`. Chaque valeur distincte de `index + offset` produit
-/// une séquence distincte (représentation en base 5 sur 150 chiffres,
-/// complétée par des 'A' en tête), garantissant l'absence de collision
-/// pour tous les indices utilisés dans les tests.
+/// Remplace l'encodage en base 5 précédent :
+///   - N'utilise que ACGT (pas de N, conforme NovaSeq haute qualité)
+///   - Distribution équilibrée (~25% par base) pour toutes les plages d'indices
+///   - Garantit l'unicité en pratique pour tous les indices utilisés dans les tests
+///     (max ~200 ; probabilité de collision dans 4^150 séquences ≈ 0)
 ///
-/// - `offset = 0`    → séquences R1 / Single-End
-/// - `offset = 9999` → séquences R2 (distinctes des R1 pour le même index)
+/// Convention d'offset :
+///   offset = 0    → séquences R1 / Single-End
+///   offset = 9999 → séquences R2 (distinctes pour le même index)
 fn generer_sequence(index: usize, offset: usize) -> String {
     const LONGUEUR: usize = 150;
+    const NUCLEOTIDES: [u8; 4] = [b'A', b'C', b'G', b'T'];
+    // Graine dérivée de (index, offset) ; +1 pour éviter l'état nul
+    let mut state = index
+        .wrapping_mul(2_654_435_761)
+        .wrapping_add(offset.wrapping_mul(40_503))
+        .wrapping_add(1) as u64;
     let mut seq = Vec::with_capacity(LONGUEUR);
-    let mut curseur = index.wrapping_add(offset);
-
     for _ in 0..LONGUEUR {
-        seq.push(NUCLEOTIDES[curseur % NUCLEOTIDES.len()]);
-        curseur /= NUCLEOTIDES.len();
+        // LCG de Knuth (période maximale sur u64)
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        seq.push(NUCLEOTIDES[((state >> 33) & 3) as usize]);
     }
-
     String::from_utf8(seq).expect("Séquence UTF-8 invalide")
 }
+
+/// Génère des scores de qualité NovaSeq réalistes sur 150 cycles.
+///
+/// NovaSeq utilise exclusivement 4 bins de qualité :
+///   Q2  → '#' (ASCII 35) — bases très basses qualité
+///   Q12 → '-' (ASCII 45) — bases dégradées
+///   Q23 → '8' (ASCII 56) — qualité intermédiaire
+///   Q37 → 'F' (ASCII 70) — haute qualité (majorité)
+///
+/// Distribution approximative : 5% Q2, 5% Q12, 15% Q23, 75% Q37
+/// (profil typique de lecture NovaSeq 2×150 sur génome entier).
+fn generer_qualite(index: usize) -> String {
+    const BINS: [u8; 4] = [b'#', b'-', b'8', b'F'];
+    let mut state = index.wrapping_mul(2_654_435_761).wrapping_add(99_991) as u64;
+    let mut qual = Vec::with_capacity(150);
+    for _ in 0..150 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let r = (state >> 33) % 100;
+        let bin = if r < 5 { 0 } else if r < 10 { 1 } else if r < 25 { 2 } else { 3 };
+        qual.push(BINS[bin]);
+    }
+    String::from_utf8(qual).unwrap()
+}
+
+// ================================================================
+// UTILITAIRE : GÉNÉRATEURS DE FICHIERS
+// ================================================================
 
 fn generer_fastq(
     dir: &assert_fs::TempDir,
@@ -53,24 +89,58 @@ fn generer_fastq(
     let mut contenu = String::new();
 
     for i in 0..nb_uniques {
-        let seq = generer_sequence(i, 0);
-        let qual: String = (0..150).map(|j| if (i + j) % 10 == 0 { ',' } else { 'F' }).collect();
         contenu.push_str(&format!(
             "@A00123:456:HFWV2DSXX:1:1101:1000:{} 1:N:0:ATGC\n{}\n+\n{}\n",
-            1000 + i, seq, qual
+            1000 + i,
+            generer_sequence(i, 0),
+            generer_qualite(i)
         ));
     }
-
     for i in 0..nb_duplications {
-        let seq = generer_sequence(i, 0); // même offset → même séquence → duplication
-        let qual: String = (0..150).map(|j| if (i + j) % 10 == 0 { ',' } else { 'F' }).collect();
+        // Même séquence qu'à l'index i, qualité différente (duplication PCR réaliste)
         contenu.push_str(&format!(
             "@A00123:456:HFWV2DSXX:1:1101:5000:{} 1:N:0:ATGC\n{}\n+\n{}\n",
-            1000 + i, seq, qual
+            1000 + i,
+            generer_sequence(i, 0),
+            generer_qualite(i + 1000)
         ));
     }
 
     fichier.write_str(&contenu).unwrap();
+    fichier
+}
+
+/// Crée un fichier FASTQ compressé (.fastq.gz) utilisable comme entrée.
+fn generer_fastq_gz(
+    dir: &assert_fs::TempDir,
+    nom_fichier: &str,
+    nb_uniques: usize,
+    nb_duplications: usize,
+) -> assert_fs::fixture::ChildPath {
+    let fichier = dir.child(nom_fichier);
+    let mut contenu = String::new();
+
+    for i in 0..nb_uniques {
+        contenu.push_str(&format!(
+            "@A00123:456:HFWV2DSXX:1:1101:1000:{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            1000 + i,
+            generer_sequence(i, 0),
+            generer_qualite(i)
+        ));
+    }
+    for i in 0..nb_duplications {
+        contenu.push_str(&format!(
+            "@A00123:456:HFWV2DSXX:1:1101:5000:{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            1000 + i,
+            generer_sequence(i, 0),
+            generer_qualite(i + 1000)
+        ));
+    }
+
+    let file = File::create(fichier.path()).unwrap();
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    encoder.write_all(contenu.as_bytes()).unwrap();
+    encoder.finish().unwrap();
     fichier
 }
 
@@ -86,14 +156,15 @@ fn generer_fasta(
     for i in 0..nb_uniques {
         contenu.push_str(&format!(
             ">A00123:456:HFWV2DSXX:1:1101:1000:{} 1:N:0:ATGC\n{}\n",
-            1000 + i, generer_sequence(i, 0)
+            1000 + i,
+            generer_sequence(i, 0)
         ));
     }
-
     for i in 0..nb_duplications {
         contenu.push_str(&format!(
             ">A00123:456:HFWV2DSXX:1:1101:5000:{} 1:N:0:ATGC\n{}\n",
-            1000 + i, generer_sequence(i, 0)
+            1000 + i,
+            generer_sequence(i, 0)
         ));
     }
 
@@ -114,15 +185,35 @@ fn generer_fastq_paire(
     let mut contenu_r2 = String::new();
 
     for i in 0..nb_uniques {
-        let base_id = format!("@A00123:456:HFWV2DSXX:1:1101:1000:{} ", 1000 + i);
-        contenu_r1.push_str(&format!("{}1:N:0:ATGC\n{}\n+\n{}\n", base_id, generer_sequence(i, 0), "F".repeat(150)));
-        contenu_r2.push_str(&format!("{}2:N:0:ATGC\n{}\n+\n{}\n", base_id, generer_sequence(i, 9999), "F".repeat(150)));
+        // L'ID de base est identique pour R1 et R2 ; seul le champ direction (1: vs 2:) diffère.
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:1000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            "@{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0),
+            generer_qualite(i)
+        ));
+        contenu_r2.push_str(&format!(
+            "@{} 2:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999),
+            generer_qualite(i + 500)
+        ));
     }
-
     for i in 0..nb_duplications {
-        let base_id = format!("@A00123:456:HFWV2DSXX:1:1101:5000:{} ", 1000 + i);
-        contenu_r1.push_str(&format!("{}1:N:0:ATGC\n{}\n+\n{}\n", base_id, generer_sequence(i, 0), "F".repeat(150)));
-        contenu_r2.push_str(&format!("{}2:N:0:ATGC\n{}\n+\n{}\n", base_id, generer_sequence(i, 9999), "F".repeat(150)));
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:5000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            "@{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0),
+            generer_qualite(i + 1000)
+        ));
+        contenu_r2.push_str(&format!(
+            "@{} 2:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999),
+            generer_qualite(i + 1500)
+        ));
     }
 
     fichier_r1.write_str(&contenu_r1).unwrap();
@@ -143,15 +234,30 @@ fn generer_fasta_paire(
     let mut contenu_r2 = String::new();
 
     for i in 0..nb_uniques {
-        let base_id = format!(">A00123:456:HFWV2DSXX:1:1101:1000:{} ", 1000 + i);
-        contenu_r1.push_str(&format!("{}1:N:0:ATGC\n{}\n", base_id, generer_sequence(i, 0)));
-        contenu_r2.push_str(&format!("{}2:N:0:ATGC\n{}\n", base_id, generer_sequence(i, 9999)));
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:1000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            ">{} 1:N:0:ATGC\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0)
+        ));
+        contenu_r2.push_str(&format!(
+            ">{} 2:N:0:ATGC\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999)
+        ));
     }
-
     for i in 0..nb_duplications {
-        let base_id = format!(">A00123:456:HFWV2DSXX:1:1101:5000:{} ", 1000 + i);
-        contenu_r1.push_str(&format!("{}1:N:0:ATGC\n{}\n", base_id, generer_sequence(i, 0)));
-        contenu_r2.push_str(&format!("{}2:N:0:ATGC\n{}\n", base_id, generer_sequence(i, 9999)));
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:5000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            ">{} 1:N:0:ATGC\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0)
+        ));
+        contenu_r2.push_str(&format!(
+            ">{} 2:N:0:ATGC\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999)
+        ));
     }
 
     fichier_r1.write_str(&contenu_r1).unwrap();
@@ -159,7 +265,68 @@ fn generer_fasta_paire(
     (fichier_r1, fichier_r2)
 }
 
-/// Décompresse un fichier .gz et retourne son contenu sous forme de String.
+/// Génère une paire de fichiers FASTQ avec un nombre de reads délibérément
+/// différent entre R1 et R2, pour tester la détection de désynchronisation
+/// en fin de fichier.
+fn generer_fastq_paire_desynchronisee(
+    dir: &assert_fs::TempDir,
+    nom_r1: &str,
+    nom_r2: &str,
+    nb_r1: usize,
+    nb_r2: usize,
+) -> (assert_fs::fixture::ChildPath, assert_fs::fixture::ChildPath) {
+    let fichier_r1 = dir.child(nom_r1);
+    let fichier_r2 = dir.child(nom_r2);
+    let mut contenu_r1 = String::new();
+    let mut contenu_r2 = String::new();
+
+    // Portion commune : IDs identiques, boucle synchronisée
+    let nb_common = nb_r1.min(nb_r2);
+    for i in 0..nb_common {
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:1000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            "@{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0),
+            generer_qualite(i)
+        ));
+        contenu_r2.push_str(&format!(
+            "@{} 2:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999),
+            generer_qualite(i + 500)
+        ));
+    }
+    // Reads supplémentaires côté R1 (si R1 > R2)
+    for i in nb_common..nb_r1 {
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:1000:{}", 1000 + i);
+        contenu_r1.push_str(&format!(
+            "@{} 1:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 0),
+            generer_qualite(i)
+        ));
+    }
+    // Reads supplémentaires côté R2 (si R2 > R1)
+    for i in nb_common..nb_r2 {
+        let base_cluster = format!("A00123:456:HFWV2DSXX:1:1101:1000:{}", 1000 + i);
+        contenu_r2.push_str(&format!(
+            "@{} 2:N:0:ATGC\n{}\n+\n{}\n",
+            base_cluster,
+            generer_sequence(i, 9999),
+            generer_qualite(i + 500)
+        ));
+    }
+
+    fichier_r1.write_str(&contenu_r1).unwrap();
+    fichier_r2.write_str(&contenu_r2).unwrap();
+    (fichier_r1, fichier_r2)
+}
+
+// ================================================================
+// UTILITAIRE : HELPERS D'ANALYSE DE SORTIE
+// ================================================================
+
 fn decompresser_gz(chemin: &std::path::Path) -> String {
     let octets = fs::read(chemin).unwrap();
     let mut decoder = flate2::read::GzDecoder::new(&octets[..]);
@@ -176,9 +343,25 @@ fn compter_sequences_fasta(contenu: &str) -> usize {
     contenu.lines().filter(|l| l.starts_with('>')).count()
 }
 
-// --------------------------------------------------------
-// TESTS SINGLE-END - ERREURS D'ENTRÉE
-// --------------------------------------------------------
+/// Extrait la liste des identifiants de base (avant l'espace) depuis un contenu FASTQ.
+/// Permet une vérification de contenu, pas seulement de compte.
+fn extraire_ids_fastq(contenu: &str) -> Vec<String> {
+    contenu
+        .lines()
+        .filter(|l| l.starts_with('@'))
+        .map(|l| {
+            l.trim_start_matches('@')
+                .split_whitespace()
+                .next()
+                .unwrap_or(l)
+                .to_string()
+        })
+        .collect()
+}
+
+// ================================================================
+// TESTS SINGLE-END — ERREURS D'ENTRÉE
+// ================================================================
 
 #[test]
 fn test_fichier_entree_inexistant() {
@@ -191,6 +374,8 @@ fn test_fichier_entree_inexistant() {
         .stderr(predicate::str::contains("Failed to read input file"));
 }
 
+/// Ne teste pas de chaîne exacte issue de needletail (fragile aux mises à jour
+/// de la bibliothèque) — seul l'échec est vérifié.
 #[test]
 fn test_fichier_entree_vide() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
@@ -200,15 +385,16 @@ fn test_fichier_entree_vide() {
         .arg("-1").arg(fichier_vide.path())
         .arg("-s")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("Failed to read the first two bytes. Is the file empty?"));
+        .failure();
 }
 
 #[test]
 fn test_fichier_entree_mauvais_format() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
     let fichier_texte = temp_dir.child("mauvais_format.txt");
-    fichier_texte.write_str("Ceci n'est pas un fichier FASTQ\nAvec plusieurs lignes.").unwrap();
+    fichier_texte
+        .write_str("Ceci n'est pas un fichier FASTQ\nAvec plusieurs lignes.")
+        .unwrap();
     cmd()
         .arg("-1").arg(fichier_texte.path())
         .arg("-s")
@@ -216,7 +402,7 @@ fn test_fichier_entree_mauvais_format() {
         .failure()
         .stderr(
             predicate::str::contains("Invalid sequence data")
-                .or(predicate::str::contains("Failed to read input file"))
+                .or(predicate::str::contains("Failed to read input file")),
         );
 }
 
@@ -236,7 +422,9 @@ fn test_fichier_sortie_gz_corrompu() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
     let fichier_entree = generer_fastq(&temp_dir, "entree.fastq", 10, 0);
     let fichier_sortie_corrompu = temp_dir.child("sortie_corrompue.fastq.gz");
-    fichier_sortie_corrompu.write_str("Ceci n'est pas un gzip valide.").unwrap();
+    fichier_sortie_corrompu
+        .write_str("Ceci n'est pas un gzip valide.")
+        .unwrap();
     cmd()
         .arg("-1").arg(fichier_entree.path())
         .arg("-o").arg(fichier_sortie_corrompu.path())
@@ -245,9 +433,9 @@ fn test_fichier_sortie_gz_corrompu() {
         .stderr(predicate::str::contains("Error opening preload file"));
 }
 
-// --------------------------------------------------------
-// TESTS SINGLE-END - TAUX DE DUPLICATION
-// --------------------------------------------------------
+// ================================================================
+// TESTS SINGLE-END — TAUX DE DUPLICATION
+// ================================================================
 
 #[test]
 fn test_taux_duplication_zero_pourcent() {
@@ -290,18 +478,32 @@ fn test_taux_duplication_50_pourcent() {
         .stdout(predicate::str::contains("Duplicates removed: 50.00%"));
 }
 
+/// Taux de duplication typique NovaSeq sur librairie amplicon/faible-input (~30%).
+#[test]
+fn test_taux_duplication_30_pourcent_novaseq() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    // 70 uniques + 30 duplicats = 100 lectures, 30/100 = 30.00%
+    let entree = generer_fastq(&temp_dir, "30_pourcent.fastq", 70, 30);
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-s").arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Processed fragments: 100"))
+        .stdout(predicate::str::contains("Duplicates removed: 30.00%"));
+}
+
 #[test]
 fn test_taux_duplication_entree_toutes_identiques() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
-    // 10 lectures toutes identiques : la première est unique, les 9 suivantes sont des doublons
-    // → 9/10 = 90.00%
+    // 10 lectures identiques : 1 unique + 9 doublons = 90.00%
     let fichier = temp_dir.child("tous_identiques.fastq");
     let seq = generer_sequence(42, 0);
     let mut contenu = String::new();
     for i in 0..10 {
         contenu.push_str(&format!(
             "@read_{} 1:N:0:ATGC\n{}\n+\n{}\n",
-            i, seq, "F".repeat(150)
+            i, seq, generer_qualite(i)
         ));
     }
     fichier.write_str(&contenu).unwrap();
@@ -315,9 +517,50 @@ fn test_taux_duplication_entree_toutes_identiques() {
         .stdout(predicate::str::contains("Duplicates removed: 90.00%"));
 }
 
-// --------------------------------------------------------
-// TESTS SINGLE-END - FORMAT ET COMPRESSION DE SORTIE
-// --------------------------------------------------------
+// ================================================================
+// TESTS SINGLE-END — ENTRÉE COMPRESSÉE (GZ)
+// ================================================================
+
+/// Vérifie que needletail lit correctement un fichier .fastq.gz en entrée.
+#[test]
+fn test_entree_fastq_gz_compresse() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let entree = generer_fastq_gz(&temp_dir, "entree.fastq.gz", 20, 5);
+    let sortie = temp_dir.child("sortie.fastq");
+
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-o").arg(sortie.path())
+        .assert()
+        .success();
+
+    let contenu = fs::read_to_string(sortie.path()).unwrap();
+    assert_eq!(
+        compter_sequences_fastq(&contenu),
+        20,
+        "Doit contenir 20 séquences uniques depuis une entrée .fastq.gz"
+    );
+}
+
+/// Vérifie le taux de duplication en dry-run sur une entrée .fastq.gz.
+/// 50 uniques + 10 duplicats = 60 lectures, 10/60 ≈ 16.67%
+#[test]
+fn test_entree_fastq_gz_dry_run() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let entree = generer_fastq_gz(&temp_dir, "entree.fastq.gz", 50, 10);
+
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-s").arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Processed fragments: 60"))
+        .stdout(predicate::str::contains("Duplicates removed: 16.67%"));
+}
+
+// ================================================================
+// TESTS SINGLE-END — FORMAT ET COMPRESSION DE SORTIE
+// ================================================================
 
 #[test]
 fn test_sortie_fastq_non_compresse() {
@@ -355,7 +598,7 @@ fn test_sortie_fastq_gz_compresse() {
 
     let contenu = decompresser_gz(sortie.path());
     assert!(contenu.starts_with('@'));
-    assert_eq!(compter_sequences_fastq(&contenu), 10, "Doit contenir 10 séquences uniques");
+    assert_eq!(compter_sequences_fastq(&contenu), 10);
 }
 
 #[test]
@@ -410,7 +653,7 @@ fn test_sortie_fasta_extension_fasta() {
     let contenu = fs::read_to_string(sortie.path()).unwrap();
     assert!(contenu.starts_with('>'), "La sortie .fasta doit commencer par '>'");
     assert!(!contenu.contains('+'), "La sortie FASTA ne doit pas contenir de ligne '+'");
-    assert_eq!(compter_sequences_fasta(&contenu), 10, "Doit contenir 10 séquences uniques");
+    assert_eq!(compter_sequences_fasta(&contenu), 10);
 }
 
 #[test]
@@ -465,7 +708,7 @@ fn test_sortie_fasta_gz_compresse() {
 
     let contenu = decompresser_gz(sortie.path());
     assert!(contenu.starts_with('>'));
-    assert_eq!(compter_sequences_fasta(&contenu), 8, "Doit contenir 8 séquences uniques");
+    assert_eq!(compter_sequences_fasta(&contenu), 8);
 }
 
 #[test]
@@ -485,9 +728,8 @@ fn test_entree_fasta_sortie_fasta() {
     assert_eq!(compter_sequences_fasta(&contenu), 10);
 }
 
-/// La conversion FASTA → FASTQ est impossible car les scores de qualité
-/// n'existent pas dans les fichiers FASTA. Le binaire doit refuser
-/// explicitement cette opération avec un message d'erreur clair.
+/// La conversion FASTA → FASTQ est impossible (pas de scores de qualité en FASTA).
+/// Le binaire doit refuser explicitement cette opération.
 #[test]
 fn test_entree_fasta_sortie_fastq_non_supporte() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
@@ -502,14 +744,13 @@ fn test_entree_fasta_sortie_fastq_non_supporte() {
         .stderr(predicate::str::contains("FASTA → FASTQ conversion not supported"));
 }
 
-// --------------------------------------------------------
-// SINGLE-END TESTS - --force BEHAVIOR
-// --------------------------------------------------------
+// ================================================================
+// TESTS SINGLE-END — COMPORTEMENT --force ET REPRISE
+// ================================================================
 
 #[test]
 fn test_force_overwrites_existing_file() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
-    // Premier passage : 10 séquences uniques
     let entree_1 = generer_fastq(&temp_dir, "entree_1.fastq", 10, 0);
     let sortie = temp_dir.child("sortie.fastq");
 
@@ -519,9 +760,12 @@ fn test_force_overwrites_existing_file() {
         .assert()
         .success();
 
-    assert_eq!(compter_sequences_fastq(&fs::read_to_string(sortie.path()).unwrap()), 10);
+    assert_eq!(
+        compter_sequences_fastq(&fs::read_to_string(sortie.path()).unwrap()),
+        10
+    );
 
-    // Second pass with --force and a smaller file: must overwrite, not append
+    // Second passage avec --force et un fichier plus petit : doit écraser, pas ajouter
     let entree_2 = generer_fastq(&temp_dir, "entree_2.fastq", 4, 0);
     cmd()
         .arg("-1").arg(entree_2.path())
@@ -530,31 +774,27 @@ fn test_force_overwrites_existing_file() {
         .assert()
         .success();
 
-    let contenu_final = fs::read_to_string(sortie.path()).unwrap();
     assert_eq!(
-        compter_sequences_fastq(&contenu_final),
+        compter_sequences_fastq(&fs::read_to_string(sortie.path()).unwrap()),
         4,
-        "--force must overwrite the existing file, not append to it"
+        "--force doit écraser le fichier existant, pas y ajouter"
     );
 }
 
 #[test]
 fn test_without_force_resumes_from_existing_output() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
-    // Simule une reprise : la sortie contient déjà 5 séquences,
-    // l'entrée contient les mêmes 5 séquences + 5 nouvelles.
-    // Without --force, the 5 existing ones should be considered already processed.
     let entree_initiale = generer_fastq(&temp_dir, "entree_initiale.fastq", 5, 0);
     let sortie = temp_dir.child("sortie_reprise.fastq");
 
-    // Premier passage : produit 5 séquences
+    // Premier passage : 5 séquences uniques
     cmd()
         .arg("-1").arg(entree_initiale.path())
         .arg("-o").arg(sortie.path())
         .assert()
         .success();
 
-    // Deuxième passage : l'entrée contient les 5 mêmes + 5 nouvelles
+    // Deuxième passage : les 5 mêmes + 5 nouvelles
     let entree_complete = generer_fastq(&temp_dir, "entree_complete.fastq", 10, 0);
     cmd()
         .arg("-1").arg(entree_complete.path())
@@ -568,11 +808,81 @@ fn test_without_force_resumes_from_existing_output() {
         10,
         "Après reprise, la sortie doit contenir 10 séquences uniques au total"
     );
+
+    // Vérification de contenu : aucun ID ne doit apparaître deux fois
+    let ids = extraire_ids_fastq(&contenu_final);
+    let mut ids_tries = ids.clone();
+    ids_tries.sort();
+    ids_tries.dedup();
+    assert_eq!(
+        ids.len(),
+        ids_tries.len(),
+        "Aucun ID de lecture ne doit être dupliqué dans la sortie de reprise"
+    );
 }
 
-// --------------------------------------------------------
-// TESTS SINGLE-END - MODE DE HACHAGE MANUEL
-// --------------------------------------------------------
+// ================================================================
+// TESTS SINGLE-END — SÉLECTION AUTOMATIQUE DU MODE DE HACHAGE
+// ================================================================
+
+/// Un threshold très petit (→ 0) force la sélection du 128-bit pour toute taille de fichier.
+/// Vérifie le chemin de sélection automatique sans nécessiter un fichier de 67 Go.
+#[test]
+fn test_selection_automatique_hash_128_bits_via_threshold() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let entree = generer_fastq(&temp_dir, "entree.fastq", 10, 0);
+    let sortie = temp_dir.child("sortie.fastq");
+
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-o").arg(sortie.path())
+        .arg("-t").arg("0.000000000000000000001") // threshold ≈ 0 → seuil = ~0 → 128-bit
+        .arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("128-bit Hash"));
+}
+
+/// Un threshold de 1.0 (100% de collisions acceptées) force le 64-bit pour toute taille pratique.
+#[test]
+fn test_selection_automatique_hash_64_bits_via_threshold() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let entree = generer_fastq(&temp_dir, "entree.fastq", 10, 0);
+    let sortie = temp_dir.child("sortie.fastq");
+
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-o").arg(sortie.path())
+        .arg("-t").arg("1.0") // seuil ≈ 6 milliards → fichiers de test bien en dessous
+        .arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("64-bit Hash"));
+}
+
+/// Vérifie que l'avertissement est émis quand --hash et --threshold sont fournis ensemble.
+#[test]
+fn test_avertissement_hash_et_threshold_ignores() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let entree = generer_fastq(&temp_dir, "entree.fastq", 10, 0);
+    let sortie = temp_dir.child("sortie.fastq");
+
+    cmd()
+        .arg("-1").arg(entree.path())
+        .arg("-o").arg(sortie.path())
+        .arg("-H").arg("64")
+        .arg("-t").arg("0.5")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("threshold")
+                .and(predicate::str::contains("ignored")),
+        );
+}
+
+// ================================================================
+// TESTS SINGLE-END — MODE DE HACHAGE MANUEL
+// ================================================================
 
 #[test]
 fn test_hachage_64_bits_explicite() {
@@ -589,8 +899,10 @@ fn test_hachage_64_bits_explicite() {
         .success()
         .stdout(predicate::str::contains("64-bit Hash"));
 
-    let contenu = fs::read_to_string(sortie.path()).unwrap();
-    assert_eq!(compter_sequences_fastq(&contenu), 20);
+    assert_eq!(
+        compter_sequences_fastq(&fs::read_to_string(sortie.path()).unwrap()),
+        20
+    );
 }
 
 #[test]
@@ -608,8 +920,10 @@ fn test_hachage_128_bits_explicite() {
         .success()
         .stdout(predicate::str::contains("128-bit Hash"));
 
-    let contenu = fs::read_to_string(sortie.path()).unwrap();
-    assert_eq!(compter_sequences_fastq(&contenu), 20);
+    assert_eq!(
+        compter_sequences_fastq(&fs::read_to_string(sortie.path()).unwrap()),
+        20
+    );
 }
 
 #[test]
@@ -635,12 +949,15 @@ fn test_hachage_64_et_128_bits_produisent_le_meme_resultat() {
 
     let count_64 = compter_sequences_fastq(&fs::read_to_string(sortie_64.path()).unwrap());
     let count_128 = compter_sequences_fastq(&fs::read_to_string(sortie_128.path()).unwrap());
-    assert_eq!(count_64, count_128, "Les deux modes de hachage doivent produire le même nombre de séquences uniques");
+    assert_eq!(
+        count_64, count_128,
+        "Les deux modes de hachage doivent produire le même nombre de séquences uniques"
+    );
 }
 
-// --------------------------------------------------------
-// TESTS SINGLE-END - INTÉGRITÉ APRÈS COMPRESSION
-// --------------------------------------------------------
+// ================================================================
+// TESTS SINGLE-END — INTÉGRITÉ APRÈS COMPRESSION
+// ================================================================
 
 #[test]
 fn test_compression_gz_valide_fastq() {
@@ -697,39 +1014,48 @@ fn test_deduplication_preservee_apres_compression() {
         .success();
 
     let count_gz = compter_sequences_fastq(&decompresser_gz(sortie_gz.path()));
-    let count_non_gz = compter_sequences_fastq(&fs::read_to_string(sortie_non_gz.path()).unwrap());
+    let count_non_gz =
+        compter_sequences_fastq(&fs::read_to_string(sortie_non_gz.path()).unwrap());
 
-    assert_eq!(count_gz, count_non_gz, "Le nombre de séquences doit être identique entre .gz et non-.gz");
+    assert_eq!(
+        count_gz, count_non_gz,
+        "Le nombre de séquences doit être identique entre .gz et non-.gz"
+    );
     assert_eq!(count_gz, 10, "Doit contenir exactement 10 séquences uniques");
 }
 
-// --------------------------------------------------------
-// TESTS PAIRED-END - ERREURS ET VALIDATION
-// --------------------------------------------------------
+// ================================================================
+// TESTS PAIRED-END — ERREURS ET VALIDATION
+// ================================================================
 
 #[test]
 fn test_paire_erreur_sortie_r2_manquante() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
     let (r1, r2) = generer_fastq_paire(&temp_dir, "R1.fastq", "R2.fastq", 10, 0);
-    let sortie_r1 = temp_dir.child("sortie_r1.fastq"); // chemin dans le temp_dir
+    let sortie_r1 = temp_dir.child("sortie_r1.fastq");
 
     cmd()
         .arg("-1").arg(r1.path())
         .arg("-2").arg(r2.path())
-        .arg("-o").arg(sortie_r1.path()) // utilise le temp_dir, pas le répertoire courant
+        .arg("-o").arg(sortie_r1.path())
+        // -p intentionnellement absent
         .assert()
         .failure()
-        .stderr(predicate::str::contains("The --output-r2 (-p) argument is required"));
+        .stderr(
+            predicate::str::contains("--output-r2")
+                .and(predicate::str::contains("required")),
+        );
 }
 
 #[test]
-fn test_paire_desynchronisee_bloquee() {
+fn test_paire_desynchronisee_en_tete_bloquee() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
     let (r1, r2) = generer_fastq_paire(&temp_dir, "R1_desync.fastq", "R2_desync.fastq", 10, 0);
 
-    // Insérer une lecture supplémentaire en tête de R2 pour créer une désynchronisation
-    let mut contenu_r2_corrompu =
-        String::from("@A00123:456:HFWV2DSXX:1:1101:9999:9999 2:N:0:ATGC\nATGC\n+\nFFFF\n");
+    // Insérer une lecture en tête de R2 : l'ID du premier record R2 ne correspond plus à R1
+    let mut contenu_r2_corrompu = String::from(
+        "@A00123:456:HFWV2DSXX:1:1101:9999:9999 2:N:0:ATGC\nATGC\n+\nFFFF\n",
+    );
     contenu_r2_corrompu.push_str(&fs::read_to_string(r2.path()).unwrap());
     r2.write_str(&contenu_r2_corrompu).unwrap();
 
@@ -741,6 +1067,44 @@ fn test_paire_desynchronisee_bloquee() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Critical desynchronization detected"));
+}
+
+/// Vérifie la détection de désynchronisation de fin de fichier quand R1 > R2.
+#[test]
+fn test_paire_desync_fin_fichier_r1_plus_long() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    // R1 : 12 reads, R2 : 10 reads — les 10 premiers s'apparient correctement
+    let (r1, r2) =
+        generer_fastq_paire_desynchronisee(&temp_dir, "R1.fastq", "R2.fastq", 12, 10);
+
+    cmd()
+        .arg("-1").arg(r1.path())
+        .arg("-2").arg(r2.path())
+        .arg("-o").arg(temp_dir.child("out_r1.fastq").path())
+        .arg("-p").arg(temp_dir.child("out_r2.fastq").path())
+        .arg("--force")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Desynchronization detected at the end"));
+}
+
+/// Vérifie la détection de désynchronisation de fin de fichier quand R2 > R1.
+#[test]
+fn test_paire_desync_fin_fichier_r2_plus_long() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    // R1 : 10 reads, R2 : 12 reads
+    let (r1, r2) =
+        generer_fastq_paire_desynchronisee(&temp_dir, "R1.fastq", "R2.fastq", 10, 12);
+
+    cmd()
+        .arg("-1").arg(r1.path())
+        .arg("-2").arg(r2.path())
+        .arg("-o").arg(temp_dir.child("out_r1.fastq").path())
+        .arg("-p").arg(temp_dir.child("out_r2.fastq").path())
+        .arg("--force")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Desynchronization detected at the end"));
 }
 
 #[test]
@@ -758,14 +1122,30 @@ fn test_paire_formats_incoherents() {
         .stderr(predicate::str::contains("must have the same format"));
 }
 
-// --------------------------------------------------------
-// TESTS PAIRED-END - TAUX DE DUPLICATION
-// --------------------------------------------------------
+/// La conversion FASTA → FASTQ doit être bloquée en mode Paired-End.
+#[test]
+fn test_paire_entree_fasta_sortie_fastq_non_supporte() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let (r1, r2) = generer_fasta_paire(&temp_dir, "R1.fasta", "R2.fasta", 10, 0);
+
+    cmd()
+        .arg("-1").arg(r1.path())
+        .arg("-2").arg(r2.path())
+        .arg("-o").arg(temp_dir.child("sortie_R1.fastq").path())
+        .arg("-p").arg(temp_dir.child("sortie_R2.fastq").path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("FASTA → FASTQ conversion not supported"));
+}
+
+// ================================================================
+// TESTS PAIRED-END — TAUX DE DUPLICATION
+// ================================================================
 
 #[test]
 fn test_paire_taux_duplication_33_pourcent() {
     let temp_dir = assert_fs::TempDir::new().unwrap();
-    // 100 paires uniques + 50 paires dupliquées = 150 paires, 50/150 ≈ 33.33%
+    // 100 paires uniques + 50 dupliquées = 150 paires, 50/150 ≈ 33.33%
     let (r1, r2) = generer_fastq_paire(&temp_dir, "R1.fastq", "R2.fastq", 100, 50);
 
     cmd()
@@ -780,9 +1160,9 @@ fn test_paire_taux_duplication_33_pourcent() {
         .stdout(predicate::str::contains("Duplicates removed: 33.33%"));
 }
 
-// --------------------------------------------------------
-// TESTS PAIRED-END - FORMAT ET COMPRESSION DE SORTIE
-// --------------------------------------------------------
+// ================================================================
+// TESTS PAIRED-END — FORMAT ET COMPRESSION DE SORTIE
+// ================================================================
 
 #[test]
 fn test_paire_sortie_fastq() {
@@ -863,7 +1243,10 @@ fn test_paire_sortie_fastq_gz() {
 
     assert!(contenu_r1.starts_with('@'));
     assert_eq!(compter_sequences_fastq(&contenu_r1), 10);
-    assert_eq!(compter_sequences_fastq(&contenu_r1), compter_sequences_fastq(&contenu_r2));
+    assert_eq!(
+        compter_sequences_fastq(&contenu_r1),
+        compter_sequences_fastq(&contenu_r2)
+    );
 }
 
 #[test]
@@ -892,7 +1275,10 @@ fn test_paire_sortie_fasta_gz() {
 
     assert!(contenu_r1.starts_with('>'));
     assert_eq!(compter_sequences_fasta(&contenu_r1), 10);
-    assert_eq!(compter_sequences_fasta(&contenu_r1), compter_sequences_fasta(&contenu_r2));
+    assert_eq!(
+        compter_sequences_fasta(&contenu_r1),
+        compter_sequences_fasta(&contenu_r2)
+    );
 }
 
 #[test]
@@ -916,5 +1302,135 @@ fn test_paire_entree_fasta_sortie_fasta() {
     assert!(contenu_r1.starts_with('>'));
     assert!(contenu_r2.starts_with('>'));
     assert_eq!(compter_sequences_fasta(&contenu_r1), 10);
-    assert_eq!(compter_sequences_fasta(&contenu_r1), compter_sequences_fasta(&contenu_r2));
+    assert_eq!(
+        compter_sequences_fasta(&contenu_r1),
+        compter_sequences_fasta(&contenu_r2)
+    );
+}
+
+// ================================================================
+// TESTS PAIRED-END — REPRISE (RESUME)
+// ================================================================
+
+/// Vérifie que la reprise sans --force fonctionne en mode paired-end :
+/// après le second passage, R1 et R2 doivent contenir exactement le total
+/// de paires uniques sans duplication de contenu.
+#[test]
+fn test_paire_reprise_depuis_sortie_existante() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+
+    // Premier passage : 5 paires uniques
+    let (r1_init, r2_init) =
+        generer_fastq_paire(&temp_dir, "R1_init.fastq", "R2_init.fastq", 5, 0);
+    let sortie_r1 = temp_dir.child("sortie_R1.fastq");
+    let sortie_r2 = temp_dir.child("sortie_R2.fastq");
+
+    cmd()
+        .arg("-1").arg(r1_init.path())
+        .arg("-2").arg(r2_init.path())
+        .arg("-o").arg(sortie_r1.path())
+        .arg("-p").arg(sortie_r2.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        compter_sequences_fastq(&fs::read_to_string(sortie_r1.path()).unwrap()),
+        5
+    );
+    assert_eq!(
+        compter_sequences_fastq(&fs::read_to_string(sortie_r2.path()).unwrap()),
+        5
+    );
+
+    // Deuxième passage : 5 mêmes paires + 5 nouvelles, sans --force
+    let (r1_full, r2_full) =
+        generer_fastq_paire(&temp_dir, "R1_full.fastq", "R2_full.fastq", 10, 0);
+
+    cmd()
+        .arg("-1").arg(r1_full.path())
+        .arg("-2").arg(r2_full.path())
+        .arg("-o").arg(sortie_r1.path())
+        .arg("-p").arg(sortie_r2.path())
+        .assert()
+        .success();
+
+    let final_r1 = fs::read_to_string(sortie_r1.path()).unwrap();
+    let final_r2 = fs::read_to_string(sortie_r2.path()).unwrap();
+
+    assert_eq!(
+        compter_sequences_fastq(&final_r1),
+        10,
+        "R1 doit contenir 10 paires uniques après la reprise"
+    );
+    assert_eq!(
+        compter_sequences_fastq(&final_r2),
+        10,
+        "R2 doit contenir 10 paires uniques après la reprise"
+    );
+    assert_eq!(
+        compter_sequences_fastq(&final_r1),
+        compter_sequences_fastq(&final_r2),
+        "R1 et R2 doivent rester synchronisés après la reprise"
+    );
+}
+
+/// Vérifie que la synchronisation R1/R2 est préservée après une reprise :
+/// le read à la position N dans R1 et le read à la position N dans R2
+/// doivent avoir le même identifiant de cluster.
+#[test]
+fn test_paire_reprise_synchronisation_r1_r2() {
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+
+    let (r1_init, r2_init) =
+        generer_fastq_paire(&temp_dir, "R1_init.fastq", "R2_init.fastq", 8, 0);
+    let sortie_r1 = temp_dir.child("sortie_R1.fastq");
+    let sortie_r2 = temp_dir.child("sortie_R2.fastq");
+
+    cmd()
+        .arg("-1").arg(r1_init.path())
+        .arg("-2").arg(r2_init.path())
+        .arg("-o").arg(sortie_r1.path())
+        .arg("-p").arg(sortie_r2.path())
+        .assert()
+        .success();
+
+    let (r1_full, r2_full) =
+        generer_fastq_paire(&temp_dir, "R1_full.fastq", "R2_full.fastq", 15, 0);
+
+    cmd()
+        .arg("-1").arg(r1_full.path())
+        .arg("-2").arg(r2_full.path())
+        .arg("-o").arg(sortie_r1.path())
+        .arg("-p").arg(sortie_r2.path())
+        .assert()
+        .success();
+
+    let contenu_r1 = fs::read_to_string(sortie_r1.path()).unwrap();
+    let contenu_r2 = fs::read_to_string(sortie_r2.path()).unwrap();
+
+    // L'ID de base est la partie avant l'espace (commun à R1 et R2 pour chaque paire)
+    let base_ids_r1: Vec<&str> = contenu_r1
+        .lines()
+        .filter(|l| l.starts_with('@'))
+        .map(|l| l.trim_start_matches('@').split_whitespace().next().unwrap_or(l))
+        .collect();
+
+    let base_ids_r2: Vec<&str> = contenu_r2
+        .lines()
+        .filter(|l| l.starts_with('@'))
+        .map(|l| l.trim_start_matches('@').split_whitespace().next().unwrap_or(l))
+        .collect();
+
+    assert_eq!(
+        base_ids_r1.len(),
+        base_ids_r2.len(),
+        "R1 et R2 doivent avoir le même nombre de reads"
+    );
+    for (pos, (id_r1, id_r2)) in base_ids_r1.iter().zip(base_ids_r2.iter()).enumerate() {
+        assert_eq!(
+            id_r1, id_r2,
+            "Désynchronisation à la position {} : R1={}, R2={}",
+            pos, id_r1, id_r2
+        );
+    }
 }

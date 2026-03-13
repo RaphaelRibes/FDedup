@@ -193,3 +193,123 @@ impl Write for ByteCounter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hasher::HashType;
+
+    // --- birthday_problem_square_approximation ---
+
+    /// À 2^32 séquences avec un hash 64-bit, la probabilité de collision
+    /// doit être exactement 0.5 (valeur analytique connue).
+    /// Formule : (2^32)^2 / 2^(64+1) = 2^64 / 2^65 = 0.5
+    #[test]
+    fn test_birthday_64bit_a_2_puissance_32() {
+        let n = (u32::MAX as usize) + 1; // 2^32
+        let prob = birthday_problem_square_approximation(n, &HashType::XXH3_64);
+        assert!(
+            (prob - 0.5).abs() < 1e-9,
+            "Probabilité attendue 0.5, obtenue {:.12}",
+            prob
+        );
+    }
+
+    /// À 2^32 séquences avec un hash 128-bit, la probabilité doit être
+    /// exactement 2^64 / 2^129 = 2^-65 ≈ 2.71e-20.
+    #[test]
+    fn test_birthday_128bit_a_2_puissance_32() {
+        let n = (u32::MAX as usize) + 1; // 2^32
+        let prob = birthday_problem_square_approximation(n, &HashType::XXH3_128);
+        let expected = (n as f64).powi(2) / 2.0_f64.powi(129);
+        assert!(
+            (prob - expected).abs() < 1e-30,
+            "Probabilité attendue {:.3e}, obtenue {:.3e}",
+            expected,
+            prob
+        );
+    }
+
+    /// À 0 séquences, la probabilité de collision doit être 0.
+    #[test]
+    fn test_birthday_zero_sequences() {
+        let prob = birthday_problem_square_approximation(0, &HashType::XXH3_64);
+        assert_eq!(prob, 0.0);
+    }
+
+    /// À 1 séquence, la probabilité de collision doit être 1 / 2^65 ≈ 2.71e-20.
+    #[test]
+    fn test_birthday_une_sequence() {
+        let prob = birthday_problem_square_approximation(1, &HashType::XXH3_64);
+        assert!(prob > 0.0 && prob < 1e-15);
+    }
+
+    // --- get_hash_method ---
+
+    /// Une taille très grande (> seuil) avec le threshold par défaut doit
+    /// sélectionner XXH3_128.
+    #[test]
+    fn test_get_hash_method_grand_dataset_selectionne_128() {
+        // seuil pour threshold=0.001 : sqrt(2 * 2^64 * 0.001) ≈ 192_059_795
+        let grande_taille = 200_000_000_usize;
+        let methode = get_hash_method(grande_taille, 0.001);
+        assert!(
+            matches!(methode, HashType::XXH3_128),
+            "Un dataset de {} séquences doit utiliser XXH3_128", grande_taille
+        );
+    }
+
+    /// Une taille petite (< seuil) avec le threshold par défaut doit
+    /// sélectionner XXH3_64.
+    #[test]
+    fn test_get_hash_method_petit_dataset_selectionne_64() {
+        let petite_taille = 1_000_usize;
+        let methode = get_hash_method(petite_taille, 0.001);
+        assert!(
+            matches!(methode, HashType::XXH3_64),
+            "Un dataset de {} séquences doit utiliser XXH3_64", petite_taille
+        );
+    }
+
+    /// Un threshold de 0 (collisions interdites) doit toujours sélectionner
+    /// XXH3_128, quelle que soit la taille.
+    #[test]
+    fn test_get_hash_method_threshold_zero_force_128() {
+        // sqrt(0) = 0 < toute taille > 0
+        let methode = get_hash_method(1, 0.0);
+        assert!(
+            matches!(methode, HashType::XXH3_128),
+            "Un threshold de 0 doit toujours sélectionner XXH3_128"
+        );
+    }
+
+    /// Un threshold de 1.0 (toutes les collisions acceptées) doit toujours
+    /// sélectionner XXH3_64 pour des tailles pratiques (< 6 milliards).
+    #[test]
+    fn test_get_hash_method_threshold_un_force_64() {
+        // seuil pour threshold=1.0 : sqrt(2 * 2^64) ≈ 6_074_000_999
+        let methode = get_hash_method(1_000_000, 1.0);
+        assert!(
+            matches!(methode, HashType::XXH3_64),
+            "Un threshold de 1.0 doit sélectionner XXH3_64 pour un dataset de taille normale"
+        );
+    }
+
+    /// Vérifie le point de basculement exact : juste en dessous du seuil → 64-bit,
+    /// juste au-dessus → 128-bit.
+    #[test]
+    fn test_get_hash_method_point_de_basculement() {
+        // seuil exact pour threshold=0.5 : sqrt(2 * 2^64 * 0.5) = sqrt(2^64) = 2^32 = 4_294_967_296
+        let seuil = 4_294_967_296_usize; // 2^32
+        let juste_en_dessous = get_hash_method(seuil - 1, 0.5);
+        let juste_au_dessus = get_hash_method(seuil + 1, 0.5);
+        assert!(
+            matches!(juste_en_dessous, HashType::XXH3_64),
+            "Juste en dessous du seuil doit être XXH3_64"
+        );
+        assert!(
+            matches!(juste_au_dessus, HashType::XXH3_128),
+            "Juste au-dessus du seuil doit être XXH3_128"
+        );
+    }
+}
