@@ -42,5 +42,8 @@ inferno = "*"
 description = "Run a demonstration of FDedup"
 cmd = "./demo.sh"
 
+[tasks.mk_tarball]
+cmd = "cargo build --release && mv target/release/fdedup . && tar -czvf fdedup_1.0.0_linux_x86_64.tar.gz fdedup && rm fdedup"
+
 [environments]
 profile = ["profile"]

@@ -14,3 +14,4 @@ fdedup.sif
 fdedup.def
 benchmark/bin/
 demo_data
+fdedup*.tar.gz
