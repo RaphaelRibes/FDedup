@@ -60,6 +60,8 @@ pixi run fdedup --input <INPUT> [OPTIONS]
 
 ### Run with Singularity / Apptainer
 
+You can download the [latest release](https://github.com/RaphaelRibes/FastDedup/releases/tag/v1.0.0) and run the containerized version of FDedup:
+
 Using Apptainer:
 ```bash
 apptainer run fdedup.sif fdedup --input <INPUT> [OPTIONS]
