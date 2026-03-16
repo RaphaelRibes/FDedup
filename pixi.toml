@@ -23,18 +23,6 @@ cxx-compiler = ">=1.11.0,<2"
 make = ">=4.4.1,<5"
 
 
-### RAPPORT
-[feature.rapport.dependencies]
-typst = "*"
-
-[feature.rapport.tasks.compile_rapport]
-description = "Compile the Typst report to PDF"
-cmd = "typst compile --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
-
-[feature.rapport.tasks.watch_rapport]
-cmd = "typst watch --root . ./rapport/rapport.typ ./rapport/rapport.pdf"
-
-
 ### PROFILE
 [feature.profile.tasks._profile-normal]
 description = "Profile FDedup with uncompressed output using samply"

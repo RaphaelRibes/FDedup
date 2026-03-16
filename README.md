@@ -5,7 +5,9 @@
 FastDedup (FDedup) is a fast and memory-efficient FASTX PCR deduplication tool written in Rust.
 It utilizes [needletail](https://github.com/onecodex/needletail) for high-performance sequence parsing, [xxh3](https://github.com/DoumanAsh/xxhash-rust) for rapid hashing, and [fxhash](https://github.com/cbreeden/fxhash) for a low-overhead memory cache.
 
-![benchmark](rapport/PE.svg)
+![benchmark](imgs/PE.svg)
+
+Paper in preparation, you can check it [here](https://gitlab.etu.umontpellier.fr/rapha-l-ribes-m2-internship/fastdedup-paper.git).
 
 ## Features
 
