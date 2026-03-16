@@ -7,86 +7,20 @@ platforms = ["linux-64", "osx-64", "linux-aarch64", "osx-arm64"]
 channels = ["conda-forge", "bioconda"]
 
 [tool.pixitainer]
-add-file = ["target/release/fdedup:/usr/local/bin/fdedup"]
+add-file = ["Cargo.lock:/opt/conf/Cargo.lock", "Cargo.toml:/opt/conf/Cargo.toml", "src:/opt/conf/src"]
+post-command = ["pixi run cargo build --release", "mv ./target/release/fdedup /usr/local/bin/fdedup"]
 keep-def = true
-no-install = true
+env = ["default"]
 seamless = true
 output = "fdedup.sif"
+pixi-version = "0.64.0"
 
-### BENCH
-[tasks._generate-genome]
-description = "Generate a simulated genome of 100,000 bases"
-cmd = "mkdir -p data && python scripts/create_genome.py data/genome.fasta 100000"
-outputs = ["data/genome.fasta"]
-default-environment = "bench"
-
-[tasks._generate-raw]
-description = "Simulate raw NovaSeq reads from the generated genome"
-depends-on = ["_generate-genome"]
-cmd = "iss generate --model novaseq --genomes data/genome.fasta --output data/simulated -m NovaSeq -p 4 --seed 42"
-inputs = ["data/genome.fasta"]
-outputs = ["data/simulated_R1.fastq", "data/simulated_R2.fastq"]
-default-environment = "bench"
-
-[tasks._dedup]
-description = "Run FDedup on specified input and output files"
-depends-on = ["_generate-raw"]
-args = ["input", "output"]
-cmd = "cargo run --release -- -v {{ input }} {{ output }}"
-inputs = ["{{ input }}"]
-outputs = ["{{ output }}"]
-default-environment = "bench"
-
-[tasks._dedup-both]
-description = "Deduplicate both R1 and R2 reads, then re-deduplicate to test stability"
-cmd = "echo ''"
-depends-on = [
-    { task = "_dedup", args = ["data/simulated_R1.fastq","data/dedup_R1.fastq"] },
-    { task = "_dedup", args = ["data/simulated_R2.fastq","data/dedup_R2.fastq"] },
-    { task = "_dedup", args = ["data/dedup_R1.fastq","data/dedup_R1_bis.fastq"] },
-    { task = "_dedup", args = ["data/dedup_R2.fastq","data/dedup_R2_bis.fastq"] },
-]
-default-environment = "bench"
-
-[tasks._qc]
-description = "Run FastQC profiling on both simulated and deduplicated read sets"
-depends-on = ["_dedup-both"]
-cmd = "mkdir -p rapport && fastqc data/simulated_R1.fastq data/simulated_R2.fastq data/dedup_R1.fastq data/dedup_R2.fastq data/dedup_R1_bis.fastq data/dedup_R2_bis.fastq -o rapport/ -t 4"
-inputs = ["data/simulated_R1.fastq", "data/simulated_R2.fastq", "data/dedup_R1.fastq", "data/dedup_R2.fastq", "data/dedup_R1_bis.fastq", "data/dedup_R2_bis.fastq"]
-outputs = ["rapport/simulated_R1_fastqc.html", "rapport/simulated_R2_fastqc.html", "rapport/dedup_R1_fastqc.html", "rapport/dedup_R2_fastqc.html", "rapport/dedup_R1_bis_fastqc.html", "rapport/dedup_R2_bis_fastqc.html"]
-default-environment = "bench"
-
-[tasks.mqc]
-description = "Generate an aggregated MultiQC report from FastQC results"
-depends-on = ["_qc"]
-cmd = "multiqc rapport/ -o rapport/"
-inputs = ["rapport/simulated_R1_fastqc.html", "rapport/simulated_R2_fastqc.html", "rapport/dedup_R1_fastqc.html", "rapport/dedup_R2_fastqc.html"]
-outputs = ["rapport/multiqc_report.html"]
-default-environment = "bench"
-
-[tasks.start]
-description = "Open the generated MultiQC HTML report"
-depends-on = ["mqc"]
-cmd = "open rapport/multiqc_report.html"
-inputs = ["rapport/multiqc_report.html"]
-default-environment = "bench"
-
-[feature.bench.dependencies]
-insilicoseq = ">=2.0.1,<3"
-fastqc = ">=0.12.1,<0.13"
+[dependencies]
 rust = ">=1.93.1,<1.94"
-bbmap = ">=39.77,<40"
-multiqc = ">=1.33,<2"
-fastuniq = ">=1.1,<2"
-fastp = ">=1.1.0,<2"
-python = "3.11.*"
-matplotlib = "*"
-pandas = "*"
-wgsim = "*"
-wget = "*"
-gzip = "*"
-time = "*"
-bc = "*"
+c-compiler = ">=1.11.0,<2"
+cmake = ">=4.2.3,<5"
+cxx-compiler = ">=1.11.0,<2"
+make = ">=4.4.1,<5"
 
 
 ### RAPPORT
@@ -122,5 +56,4 @@ cmd = "./demo.sh"
 
 [environments]
 rapport = ["rapport"]
-bench   = ["bench"]
 profile = ["profile"]
