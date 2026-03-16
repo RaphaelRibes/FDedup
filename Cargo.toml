@@ -1,14 +1,28 @@
 [package]
-name = "fdedup"
+name = "fastdedup"
 version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Raphaël Ribes", "Céline Mandier"]
 description = "A fast and memory-efficient FASTX PCR deduplication tool"
 readme = "README.md"
 license = "MIT"
-repository = "https://gitlab.etu.umontpellier.fr/rapha-l-ribes-m2-internship/fdedup"
-keywords = ["bioinformatics", "fastq", "dedup", "pcr"]
-categories = ["science", "command-line-utilities"]
+repository = "https://github.com/RaphaelRibes/FastDedup"
+keywords = ["bioinformatics", "fastq", "fasta", "deduplication", "pcr"]
+categories = ["science", "command-line-utilities", "science::bioinformatics", "science::bioinformatics::genomics", "science::bioinformatics::sequence-analysis"]
+documentation = "https://docs.rs/fastdedup"
+exclude = [
+    "fdedup.sif",
+    "fdedup.def",
+    "*.tar.gz",
+    ".idea/",
+    ".pixi/",
+    "pixi.lock",
+    "pixi.toml",
+    "imgs/",
+    "demo.sh",
+    ".github/"
+]
 
 [dependencies]
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
@@ -22,3 +36,9 @@ anyhow = "1.0.102"
 assert_cmd = "2.1.2"
 assert_fs = "1.1.3"
 predicates = "3.1.4"
+
+[profile.release]
+lto = "fat"           # Enables Link-Time Optimization for maximum speed
+codegen-units = 1     # Slower compile time, but faster runtime execution
+strip = true          # Removes debug symbols to make the binary much smaller
+panic = "abort"       # Slightly reduces binary size and overhead
